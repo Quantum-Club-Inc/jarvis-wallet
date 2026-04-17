@@ -14,7 +14,36 @@ Voice-first TON DeFi wallet for Telegram managed bots, built with Next.js and de
 2. Enable Firestore.
 3. Create a Web App and copy client credentials.
 4. Create a Service Account and copy Admin SDK credentials.
-5. Copy `.env.example` to `.env.local` and fill all values.
+5. Add the required variables in `.env`/`.env.local` (and in Vercel project env vars).
+
+## Required environment variables
+
+### Firebase client
+
+- `NEXT_PUBLIC_FIREBASE_API_KEY`
+- `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`
+- `NEXT_PUBLIC_FIREBASE_PROJECT_ID`
+- `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`
+- `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`
+- `NEXT_PUBLIC_FIREBASE_APP_ID`
+
+### Firebase admin
+
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_CLIENT_EMAIL`
+- `FIREBASE_PRIVATE_KEY`
+
+### Telegram managed bots
+
+- `TELEGRAM_MANAGER_BOT_TOKEN`
+- `TELEGRAM_MANAGER_BOT_USERNAME`
+- `TELEGRAM_WEBHOOK_SECRET_TOKEN`
+- `TELEGRAM_MINI_APP_URL`
+- `APP_BASE_URL`
+
+### Secrets
+
+- `MANAGED_BOT_TOKEN_ENCRYPTION_KEY_BASE64` (must decode to 32 bytes for AES-256-GCM)
 
 ## Local development
 
@@ -29,3 +58,10 @@ Open `http://localhost:3000`.
 
 - Client SDK: `src/lib/firebase/client.ts`
 - Admin SDK (server-only): `src/lib/firebase/admin.ts`
+
+## Webhook endpoint
+
+- Manager bot webhook: `POST /api/webhook`
+- Managed bot webhook URL pattern: `POST /api/webhook?managedBotId=<BOT_USER_ID>`
+
+The manager route handles `/start`, `managed_bot` updates, fetches managed bot tokens through `getManagedBotToken`, stores encrypted tokens in Firestore, and configures each managed bot webhook/menu.
