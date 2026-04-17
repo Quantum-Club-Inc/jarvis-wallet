@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { FieldValue } from "firebase-admin/firestore";
+
+import { getAdminDb } from "@/lib/firebase/admin";
 import { requireEnv } from "@/lib/server/env";
 import { decryptSecret, encryptSecret } from "@/lib/security/sealedSecrets";
 import { callTelegramApi } from "@/lib/telegram/api";
@@ -12,11 +15,6 @@ export const runtime = "nodejs";
 
 function getSecretTokenFromHeaders(request: NextRequest): string | null {
   return request.headers.get("x-telegram-bot-api-secret-token");
-}
-
-async function loadAdminDb() {
-  const { getAdminDb } = await import("@/lib/firebase/admin");
-  return getAdminDb();
 }
 
 function getBaseUrl(url: string): string {
@@ -57,11 +55,11 @@ async function sendManagerStartMessage(message: TelegramMessage): Promise<void> 
 }
 
 async function storeManagedBotRecord(update: TelegramManagedBotUpdated, token: string): Promise<void> {
-  const adminDb = await loadAdminDb();
+  const adminDb = getAdminDb();
   const encryptedToken = encryptSecret(token);
   const ownerId = String(update.user.id);
   const managedBotId = String(update.bot.id);
-  const now = new Date().toISOString();
+  const now = FieldValue.serverTimestamp();
 
   await Promise.all([
     adminDb.collection("users").doc(ownerId).set(
@@ -135,7 +133,7 @@ async function handleManagedBotUpdated(update: TelegramManagedBotUpdated): Promi
 }
 
 async function getManagedBotTokenForRequest(managedBotId: string): Promise<string> {
-  const adminDb = await loadAdminDb();
+  const adminDb = getAdminDb();
   const managedBot = await adminDb.collection("managedBots").doc(managedBotId).get();
 
   if (!managedBot.exists) {
@@ -155,8 +153,8 @@ async function handleManagedBotWebhook(
   managedBotId: string,
   update: TelegramUpdate,
 ): Promise<void> {
-  const adminDb = await loadAdminDb();
-  const now = new Date().toISOString();
+  const adminDb = getAdminDb();
+  const now = FieldValue.serverTimestamp();
   const managedBotRef = adminDb.collection("managedBots").doc(managedBotId);
 
   await managedBotRef.set(
@@ -188,13 +186,7 @@ function isStartCommand(text: string | undefined): boolean {
 }
 
 function isAuthorizedWebhookRequest(request: NextRequest): boolean {
-  const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET_TOKEN;
-
-  if (!expectedSecret) {
-    console.error("TELEGRAM_WEBHOOK_SECRET_TOKEN is not configured");
-    return false;
-  }
-
+  const expectedSecret = requireEnv("TELEGRAM_WEBHOOK_SECRET_TOKEN");
   const normalizedExpectedSecret = toTelegramSafeSecret(expectedSecret);
   const requestSecret = getSecretTokenFromHeaders(request);
 
