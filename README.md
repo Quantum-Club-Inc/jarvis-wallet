@@ -2,7 +2,7 @@
 
 Voice-first TON DeFi wallet for Telegram managed bots, built with Next.js and deployed on Vercel.
 
-## Stack (current)
+#### Stack (current)
 
 - Next.js 16 (App Router, TypeScript, Tailwind CSS)
 - Firebase Firestore (`firebase`, `firebase-admin`) for app data
