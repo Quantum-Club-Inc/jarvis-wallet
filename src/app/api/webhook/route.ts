@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 
-import { adminDb } from "@/lib/firebase/admin";
+import { getAdminDb } from "@/lib/firebase/admin";
 import { requireEnv } from "@/lib/server/env";
 import { decryptSecret, encryptSecret } from "@/lib/security/sealedSecrets";
 import { callTelegramApi } from "@/lib/telegram/api";
@@ -51,6 +51,7 @@ async function sendManagerStartMessage(message: TelegramMessage): Promise<void> 
 }
 
 async function storeManagedBotRecord(update: TelegramManagedBotUpdated, token: string): Promise<void> {
+  const adminDb = getAdminDb();
   const encryptedToken = encryptSecret(token);
   const ownerId = String(update.user.id);
   const managedBotId = String(update.bot.id);
@@ -128,6 +129,7 @@ async function handleManagedBotUpdated(update: TelegramManagedBotUpdated): Promi
 }
 
 async function getManagedBotTokenForRequest(managedBotId: string): Promise<string> {
+  const adminDb = getAdminDb();
   const managedBot = await adminDb.collection("managedBots").doc(managedBotId).get();
 
   if (!managedBot.exists) {
@@ -147,6 +149,7 @@ async function handleManagedBotWebhook(
   managedBotId: string,
   update: TelegramUpdate,
 ): Promise<void> {
+  const adminDb = getAdminDb();
   const now = FieldValue.serverTimestamp();
   const managedBotRef = adminDb.collection("managedBots").doc(managedBotId);
 

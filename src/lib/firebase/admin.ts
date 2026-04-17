@@ -11,25 +11,33 @@ function requireAdminEnv(name: string, value: string | undefined): string {
   return value;
 }
 
-const projectId = requireAdminEnv("FIREBASE_PROJECT_ID", process.env.FIREBASE_PROJECT_ID);
-const clientEmail = requireAdminEnv(
-  "FIREBASE_CLIENT_EMAIL",
-  process.env.FIREBASE_CLIENT_EMAIL,
-);
-const privateKey = requireAdminEnv(
-  "FIREBASE_PRIVATE_KEY",
-  process.env.FIREBASE_PRIVATE_KEY,
-).replace(/\\n/g, "\n");
+function getAdminApp() {
+  if (getApps().length > 0) {
+    return getApp();
+  }
 
-const adminApp =
-  getApps().length > 0
-    ? getApp()
-    : initializeApp({
-        credential: cert({
-          projectId,
-          clientEmail,
-          privateKey,
-        }),
-      });
+  const projectId = requireAdminEnv(
+    "FIREBASE_PROJECT_ID",
+    process.env.FIREBASE_PROJECT_ID,
+  );
+  const clientEmail = requireAdminEnv(
+    "FIREBASE_CLIENT_EMAIL",
+    process.env.FIREBASE_CLIENT_EMAIL,
+  );
+  const privateKey = requireAdminEnv(
+    "FIREBASE_PRIVATE_KEY",
+    process.env.FIREBASE_PRIVATE_KEY,
+  ).replace(/\\n/g, "\n");
 
-export const adminDb = getFirestore(adminApp);
+  return initializeApp({
+    credential: cert({
+      projectId,
+      clientEmail,
+      privateKey,
+    }),
+  });
+}
+
+export function getAdminDb() {
+  return getFirestore(getAdminApp());
+}
