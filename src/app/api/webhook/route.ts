@@ -21,6 +21,10 @@ function getBaseUrl(url: string): string {
   return url.endsWith("/") ? url.slice(0, -1) : url;
 }
 
+function toTelegramSafeSecret(secret: string): string {
+  return secret.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
 function getSuggestedBotUsername(userId: number): string {
   return `jarvis${Math.abs(userId).toString(36)}bot`;
 }
@@ -89,7 +93,7 @@ async function storeManagedBotRecord(update: TelegramManagedBotUpdated, token: s
 async function configureManagedBot(update: TelegramManagedBotUpdated, token: string): Promise<void> {
   const baseUrl = getBaseUrl(requireEnv("APP_BASE_URL"));
   const miniAppUrl = requireEnv("TELEGRAM_MINI_APP_URL");
-  const webhookSecret = requireEnv("TELEGRAM_WEBHOOK_SECRET_TOKEN");
+  const webhookSecret = toTelegramSafeSecret(requireEnv("TELEGRAM_WEBHOOK_SECRET_TOKEN"));
   const managedBotId = String(update.bot.id);
   const webhookUrl = `${baseUrl}/api/webhook?managedBotId=${managedBotId}`;
 
@@ -183,9 +187,10 @@ function isStartCommand(text: string | undefined): boolean {
 
 function isAuthorizedWebhookRequest(request: NextRequest): boolean {
   const expectedSecret = requireEnv("TELEGRAM_WEBHOOK_SECRET_TOKEN");
+  const normalizedExpectedSecret = toTelegramSafeSecret(expectedSecret);
   const requestSecret = getSecretTokenFromHeaders(request);
 
-  return requestSecret === expectedSecret;
+  return requestSecret === expectedSecret || requestSecret === normalizedExpectedSecret;
 }
 
 export async function POST(request: NextRequest): Promise<Response> {
