@@ -32,31 +32,46 @@ export function WalletBar({ address, balance, isConnected }: WalletBarProps) {
 
   return (
     <div className="wallet-bar">
-      <div className="flex items-center gap-2.5">
+      <div className="wallet-bar-left">
         <span
           className={`wallet-status-dot ${isConnected ? "connected" : "disconnected"}`}
         />
-        <Button
-          variant="ghost"
-          size="sm"
-          className="font-mono text-xs text-muted-foreground hover:text-foreground"
-          onClick={handleCopy}
-          title={address ?? "No wallet"}
-        >
-          {copied ? "Copied!" : truncatedAddress}
-        </Button>
+        <div className="wallet-meta">
+          <span className="wallet-label">
+            {isConnected ? "Wallet connected" : "Wallet unavailable"}
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="wallet-address-trigger h-auto justify-start px-0 py-0 font-mono text-xs text-foreground/90 hover:bg-transparent hover:text-foreground"
+            onClick={handleCopy}
+            title={address ?? "No wallet"}
+          >
+            {copied ? "Address copied" : truncatedAddress}
+          </Button>
+        </div>
       </div>
-      <div className="flex items-center gap-2">
+
+      <div className="wallet-bar-right">
         {balance ? (
-          <Badge variant="secondary" className="font-mono text-xs gap-1.5">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <Badge variant="secondary" className="wallet-balance-badge">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
               <path d="M6 3h12l4 6-10 13L2 9z" />
             </svg>
             {balance} TON
           </Badge>
         ) : (
-          <Badge variant="outline" className="font-mono text-xs text-muted-foreground">
-            —
+          <Badge variant="outline" className="wallet-balance-badge muted">
+            Balance pending
           </Badge>
         )}
       </div>

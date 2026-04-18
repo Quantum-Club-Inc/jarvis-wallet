@@ -237,7 +237,7 @@ function JarvisApp() {
 
   const isLoading = status === "submitted" || status === "streaming";
   const firstName = user?.first_name?.trim() || "there";
-  const inlineNotice = error?.message ?? authError;
+  const inlineNotice = error?.message ?? (view === "chat" ? authError : null);
   const displayOrbState: OrbState = isLoading
     ? "processing"
     : isSpeaking
@@ -331,7 +331,7 @@ function JarvisApp() {
         <Button
           variant={view === "voice" ? "secondary" : "ghost"}
           size="sm"
-          className="text-xs tracking-wider uppercase rounded-full"
+          className="view-toggle-button"
           onClick={() => setView("voice")}
         >
           Voice
@@ -339,7 +339,7 @@ function JarvisApp() {
         <Button
           variant={view === "chat" ? "secondary" : "ghost"}
           size="sm"
-          className="text-xs tracking-wider uppercase rounded-full"
+          className="view-toggle-button"
           onClick={() => setView("chat")}
         >
           Chat
@@ -352,37 +352,40 @@ function JarvisApp() {
 
       {view === "voice" ? (
         <section className="voice-view">
-          <JarvisWelcome
-            firstName={firstName}
-            isReturning={welcomeMode === "returning"}
-            isTelegram={isTelegram}
-            isWalletReady={Boolean(walletAddress)}
-            authState={authState}
-            authError={authError}
-          />
+          <div className="voice-welcome-stack">
+            <JarvisWelcome
+              firstName={firstName}
+              isReturning={welcomeMode === "returning"}
+              isTelegram={isTelegram}
+              isWalletReady={Boolean(walletAddress)}
+              authState={authState}
+              authError={authError}
+            />
 
-          {welcomeMode === "first" && newMnemonic && (
-            <div className="flex flex-col items-center gap-4 mt-6 px-4 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-1000 fill-mode-both">
-              <p className="text-sm text-muted-foreground text-center max-w-[280px]">
-                Your new secure wallet has been created. Please review and verify these recovery words with your voice.
-              </p>
-              <div className="flex flex-wrap justify-center gap-2 max-w-md">
-                {newMnemonic.map((word) => (
-                  <Badge key={word} variant="secondary" className="font-mono text-xs font-normal px-2 py-1 bg-white/5 border-white/10 text-foreground/80">
-                    {word}
-                  </Badge>
-                ))}
+            {welcomeMode === "first" && newMnemonic && (
+              <div className="recovery-panel animate-in fade-in slide-in-from-bottom-4 duration-700 delay-1000 fill-mode-both">
+                <p className="recovery-panel-copy">
+                  Your wallet was created. Say each recovery word back to verify it.
+                </p>
+                <div className="recovery-words-grid">
+                  {newMnemonic.map((word) => (
+                    <Badge key={word} variant="secondary" className="recovery-word-chip">
+                      {word}
+                    </Badge>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
-          <div className="quick-prompt-row mt-8">
+          <div className="quick-prompt-row">
             {QUICK_PROMPTS.map((prompt) => (
               <Button
                 key={prompt}
                 variant="outline"
                 size="sm"
-                className="quick-prompt-pill rounded-full whitespace-nowrap"
+                type="button"
+                className="quick-prompt-pill"
                 disabled={isLoading}
                 onClick={() => handleQuickPrompt(prompt)}
               >

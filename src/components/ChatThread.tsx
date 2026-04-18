@@ -2,6 +2,15 @@
 
 import { useEffect, useRef } from "react";
 import type { UIMessage } from "ai";
+import {
+  ArrowDownCircle,
+  ArrowLeftRight,
+  BarChart3,
+  Coins,
+  TrendingUp,
+  Wallet,
+  Zap,
+} from "lucide-react";
 
 interface ChatThreadProps {
   messages: UIMessage[];
@@ -224,22 +233,22 @@ function PriceResult({ data }: { data: Record<string, unknown> }) {
   );
 }
 
-function getToolIcon(toolName: string): string {
+function getToolIcon(toolName: string) {
   switch (toolName) {
     case "check_balance":
-      return "💰";
+      return <Wallet className="size-3.5" />;
     case "swap_tokens":
-      return "🔄";
+      return <ArrowLeftRight className="size-3.5" />;
     case "stake_ton":
-      return "📈";
+      return <TrendingUp className="size-3.5" />;
     case "unstake_ton":
-      return "📤";
+      return <ArrowDownCircle className="size-3.5" />;
     case "get_staking_info":
-      return "📊";
+      return <BarChart3 className="size-3.5" />;
     case "get_token_price":
-      return "💵";
+      return <Coins className="size-3.5" />;
     default:
-      return "⚡";
+      return <Zap className="size-3.5" />;
   }
 }
 
