@@ -9,27 +9,32 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "crypto": "^1.0.1",
+    "@ai-sdk/anthropic": "^3.0.71",
+    "@ai-sdk/react": "^3.0.170",
+    "@ston-fi/api": "^0.32.0",
+    "@ston-fi/sdk": "^2.7.0",
+    "@ton/core": "^0.63.1",
+    "@ton/crypto": "^3.3.0",
+    "@ton/ton": "^16.2.4",
+    "ai": "^6.0.168",
     "firebase": "^12.12.0",
     "firebase-admin": "^13.8.0",
     "next": "16.2.4",
+    "openai": "^6.34.0",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "tonstakers-sdk": "^0.0.19-development",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.4",
     "@tailwindcss/postcss": "^4",
-    "@twa-dev/types": "^8.0.2",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "babel-plugin-react-compiler": "1.0.0",
-    "eslint": "^9.39.4",
+    "eslint": "^9",
     "eslint-config-next": "16.2.4",
-    "globals": "^17.5.0",
-    "jiti": "^2.6.1",
     "tailwindcss": "^4",
-    "typescript": "^5",
-    "typescript-eslint": "^8.58.2"
+    "typescript": "^5"
   }
 }

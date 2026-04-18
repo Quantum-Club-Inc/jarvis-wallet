@@ -169,16 +169,102 @@ async function handleManagedBotWebhook(
   const message = update.message;
   const text = message?.text;
 
-  if (!message || !text || !text.startsWith("/start")) {
+  if (!message || !text) {
     return;
   }
 
   const managedBotToken = await getManagedBotTokenForRequest(managedBotId);
 
-  await callTelegramApi<boolean>(managedBotToken, "sendMessage", {
-    chat_id: message.chat.id,
-    text: "Your Jarvis Wallet managed bot is connected. Open the Mini App from the menu button.",
-  });
+  // Handle /start command
+  if (text.startsWith("/start")) {
+    await callTelegramApi<boolean>(managedBotToken, "sendMessage", {
+      chat_id: message.chat.id,
+      text: [
+        "🤖 Your Jarvis agent is online.",
+        "",
+        "You can type DeFi commands here, or open the Mini App for the full voice experience.",
+        "",
+        "Try: \"What's my balance?\" or \"Swap 5 TON to USDT\"",
+      ].join("\n"),
+    });
+    return;
+  }
+
+  // Handle /help command
+  if (text.startsWith("/help")) {
+    await callTelegramApi<boolean>(managedBotToken, "sendMessage", {
+      chat_id: message.chat.id,
+      text: [
+        "📋 Available commands:",
+        "",
+        "• Check balance — \"What's my balance?\"",
+        "• Swap tokens — \"Swap 5 TON to USDT\"",
+        "• Stake TON — \"Stake 10 TON\"",
+        "• Staking info — \"What's the staking APY?\"",
+        "• Token price — \"What's the price of TON?\"",
+        "",
+        "Or just describe what you want to do!",
+      ].join("\n"),
+    });
+    return;
+  }
+
+  // Skip other commands
+  if (text.startsWith("/")) return;
+
+  // Forward non-command text to the AI agent
+  try {
+    // Send "typing" action
+    await callTelegramApi<boolean>(managedBotToken, "sendChatAction", {
+      chat_id: message.chat.id,
+      action: "typing",
+    });
+
+    // Look up the user's wallet address from Firestore
+    const managedBotDoc = await managedBotRef.get();
+    const ownerId = managedBotDoc.get("ownerUserId");
+    let walletAddress: string | undefined;
+
+    if (ownerId) {
+      const userDoc = await adminDb.collection("users").doc(String(ownerId)).get();
+      walletAddress = userDoc.get("walletAddress") ?? undefined;
+    }
+
+    // Call the AI agent using generateText for server-side non-streaming
+    const { generateText, convertToModelMessages, stepCountIs } = await import("ai");
+    const { anthropic } = await import("@ai-sdk/anthropic");
+    const { buildSystemPrompt } = await import("@/lib/agent/system-prompt");
+    const { agentTools } = await import("@/lib/agent/tools");
+
+    const result = await generateText({
+      model: anthropic("claude-sonnet-4-5"),
+      system: buildSystemPrompt(walletAddress),
+      messages: await convertToModelMessages([
+        {
+          role: "user" as const,
+          parts: [{ type: "text" as const, text }],
+        },
+      ]),
+      tools: agentTools,
+      stopWhen: stepCountIs(5),
+    });
+
+    // Extract the text response
+    const responseText =
+      result.text || "I processed your request but couldn't generate a text response.";
+
+    await callTelegramApi<boolean>(managedBotToken, "sendMessage", {
+      chat_id: message.chat.id,
+      text: responseText,
+      parse_mode: "Markdown",
+    });
+  } catch (error) {
+    console.error("[ManagedBot] AI agent error:", error);
+    await callTelegramApi<boolean>(managedBotToken, "sendMessage", {
+      chat_id: message.chat.id,
+      text: "Sorry, I encountered an error processing your request. Please try again.",
+    });
+  }
 }
 
 function isStartCommand(text: string | undefined): boolean {
