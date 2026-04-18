@@ -9,6 +9,8 @@ import { JarvisWelcome } from "@/components/JarvisWelcome";
 import { TelegramInit, useTelegram } from "@/components/TelegramInit";
 import { VoiceOrb, type OrbState } from "@/components/VoiceOrb";
 import { WalletBar } from "@/components/WalletBar";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { useTTS } from "@/hooks/useTTS";
 import { useVoice } from "@/hooks/useVoice";
 import {
@@ -300,9 +302,9 @@ function JarvisApp() {
     return (
       <div className="app-container app-loading-screen">
         <div className="app-loading-mark">
-          <span className="app-loading-kicker">
+          <Badge variant="secondary" className="text-[11px] tracking-widest uppercase">
             {!isReady ? "Opening session" : walletLoading ? "Securing wallet" : "Preparing welcome"}
-          </span>
+          </Badge>
           <h1 className="app-loading-title">Jarvis</h1>
           <p className="app-loading-body">
             {!isReady && "Connecting to Telegram and calibrating the viewport."}
@@ -323,21 +325,27 @@ function JarvisApp() {
       />
 
       <div className="view-toggle">
-        <button
-          className={`toggle-btn ${view === "voice" ? "active" : ""}`}
+        <Button
+          variant={view === "voice" ? "secondary" : "ghost"}
+          size="sm"
+          className="text-xs tracking-wider uppercase rounded-full"
           onClick={() => setView("voice")}
         >
           Voice
-        </button>
-        <button
-          className={`toggle-btn ${view === "chat" ? "active" : ""}`}
+        </Button>
+        <Button
+          variant={view === "chat" ? "secondary" : "ghost"}
+          size="sm"
+          className="text-xs tracking-wider uppercase rounded-full"
           onClick={() => setView("chat")}
         >
           Chat
-        </button>
+        </Button>
       </div>
 
-      {inlineNotice && <div className="app-inline-notice">{inlineNotice}</div>}
+      {inlineNotice && (
+        <div className="app-inline-notice">{inlineNotice}</div>
+      )}
 
       {view === "voice" ? (
         <section className="voice-view">
@@ -352,15 +360,16 @@ function JarvisApp() {
 
           <div className="quick-prompt-row">
             {QUICK_PROMPTS.map((prompt) => (
-              <button
+              <Button
                 key={prompt}
-                className="quick-prompt-pill"
+                variant="outline"
+                size="sm"
+                className="quick-prompt-pill rounded-full whitespace-nowrap"
                 disabled={isLoading}
                 onClick={() => handleQuickPrompt(prompt)}
-                type="button"
               >
                 {prompt}
-              </button>
+              </Button>
             ))}
           </div>
 
@@ -375,10 +384,10 @@ function JarvisApp() {
           <ChatThread messages={messages} isLoading={isLoading} />
 
           <div className="chat-fab-wrap">
-            <button
-              className={`voice-orb chat-fab ${displayOrbState}`}
+            <Button
+              size="icon-lg"
+              className={`voice-orb chat-fab ${displayOrbState} rounded-full`}
               onClick={handleOrbPress}
-              style={{ width: 48, height: 48 }}
               aria-label="Voice input"
             >
               <div className="orb-inner" style={{ transform: "scale(0.6)" }}>
@@ -415,7 +424,7 @@ function JarvisApp() {
                   </svg>
                 )}
               </div>
-            </button>
+            </Button>
           </div>
 
           <form className="text-input-bar" onSubmit={handleTextSubmit}>
@@ -426,8 +435,9 @@ function JarvisApp() {
               value={textInput}
               onChange={(event) => setTextInput(event.target.value)}
             />
-            <button
-              className="send-button"
+            <Button
+              size="icon"
+              className="send-button rounded-full"
               type="submit"
               disabled={!textInput.trim() || isLoading}
             >
@@ -439,7 +449,7 @@ function JarvisApp() {
               >
                 <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
               </svg>
-            </button>
+            </Button>
           </form>
         </>
       )}

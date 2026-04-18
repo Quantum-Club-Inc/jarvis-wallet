@@ -1,5 +1,14 @@
 "use client";
 
+import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
+
 interface JarvisWelcomeProps {
   firstName: string;
   isReturning: boolean;
@@ -20,51 +29,80 @@ export function JarvisWelcome({
   const eyebrow = isReturning ? "Welcome back" : "Welcome";
   const primaryCopy = isReturning
     ? "Your wallet, Telegram session, and voice controls are standing by."
-    : "I’m Jarvis, your personal AI wallet assistant.";
+    : "I'm Jarvis, your personal AI wallet assistant.";
   const secondaryCopy = isReturning
     ? "Pick up where you left off or speak to start a new move on TON."
-    : "Let’s get you initialized and ready to manage TON with voice or chat.";
+    : "Let's get you initialized and ready to manage TON with voice or chat.";
 
   return (
-    <section className="jarvis-welcome-panel">
-      <div className="jarvis-welcome-copy">
-        <div className="jarvis-welcome-eyebrow">{eyebrow}</div>
-        <h1 className="jarvis-welcome-title">Hi, {firstName}.</h1>
-        <p className="jarvis-welcome-lead">{primaryCopy}</p>
-        <p className="jarvis-welcome-body">{secondaryCopy}</p>
-      </div>
+    <Card className="jarvis-welcome-panel border-border/50 bg-card/60 backdrop-blur-xl">
+      <CardHeader className="gap-2">
+        <span className="jarvis-welcome-eyebrow">{eyebrow}</span>
+        <CardTitle className="jarvis-welcome-title">
+          Hi, {firstName}.
+        </CardTitle>
+        <CardDescription className="jarvis-welcome-lead text-foreground/90">
+          {primaryCopy}
+        </CardDescription>
+        <p className="text-sm text-muted-foreground leading-relaxed max-w-[28rem]">
+          {secondaryCopy}
+        </p>
+      </CardHeader>
 
-      <div className="jarvis-status-row" aria-label="Initialization status">
-        <StatusPill
-          label={isTelegram ? "Telegram live" : "Browser preview"}
-          tone={isTelegram ? "active" : "muted"}
-        />
-        <StatusPill label="Gemini core" tone="active" />
-        <StatusPill
-          label={isWalletReady ? "Wallet secured" : "Wallet loading"}
-          tone={isWalletReady ? "active" : "pending"}
-        />
-      </div>
+      <CardContent className="flex flex-col gap-4">
+        <div className="flex flex-wrap gap-2" aria-label="Initialization status">
+          <StatusBadge
+            label={isTelegram ? "Telegram live" : "Browser preview"}
+            tone={isTelegram ? "active" : "muted"}
+          />
+          <StatusBadge label="Gemini core" tone="active" />
+          <StatusBadge
+            label={isWalletReady ? "Wallet secured" : "Wallet loading"}
+            tone={isWalletReady ? "active" : "pending"}
+          />
+        </div>
 
-      <div className="jarvis-presence-row">
-        <span className="jarvis-presence-label">
-          {authState === "authenticated" && "Telegram identity linked"}
-          {authState === "authenticating" && "Linking your Telegram identity"}
-          {authState === "error" && "Telegram auth needs attention"}
-          {authState === "idle" && "Awaiting Telegram session"}
-        </span>
-        {authError && <span className="jarvis-presence-error">{authError}</span>}
-      </div>
-    </section>
+        <div className="flex flex-col gap-1.5">
+          <span className="text-sm text-muted-foreground">
+            {authState === "authenticated" && "Telegram identity linked"}
+            {authState === "authenticating" && "Linking your Telegram identity"}
+            {authState === "error" && "Telegram auth needs attention"}
+            {authState === "idle" && "Awaiting Telegram session"}
+          </span>
+          {authError && (
+            <span className="text-sm text-destructive">{authError}</span>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
-function StatusPill({
+function StatusBadge({
   label,
   tone,
 }: {
   label: string;
   tone: "active" | "pending" | "muted";
 }) {
-  return <span className={`jarvis-status-pill ${tone}`}>{label}</span>;
+  const variantMap = {
+    active: "default" as const,
+    pending: "secondary" as const,
+    muted: "outline" as const,
+  };
+
+  return (
+    <Badge
+      variant={variantMap[tone]}
+      className={
+        tone === "active"
+          ? "bg-primary/15 text-primary border-primary/20 hover:bg-primary/20"
+          : tone === "pending"
+            ? "bg-[#f4d18f]/10 text-[#ffe4b2] border-[#f4d18f]/20"
+            : ""
+      }
+    >
+      {label}
+    </Badge>
+  );
 }

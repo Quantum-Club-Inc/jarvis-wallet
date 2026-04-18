@@ -3,20 +3,14 @@ import {
   Cormorant_Garamond,
   IBM_Plex_Mono,
   Onest,
-  Geist,
 } from "next/font/google";
 import Script from "next/script";
 import "./globals.css";
 import { AuthProvider } from "@/context/auth";
 import { cn } from "@/lib/utils";
 
-const geist = Geist({
-  subsets: ["latin"],
-  variable: "--font-sans",
-});
-
 const onest = Onest({
-  variable: "--font-heading",
+  variable: "--font-sans",
   subsets: ["latin"],
   weight: "variable",
 });
@@ -56,7 +50,6 @@ export default function RootLayout({
     <html
       lang="en"
       className={cn(
-        geist.variable,
         onest.variable,
         plexMono.variable,
         cormorant.variable,
