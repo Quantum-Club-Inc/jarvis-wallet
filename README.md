@@ -1,4 +1,4 @@
-# Jarvis Wallet
+## Jarvis Wallet
 
 Voice-first TON DeFi wallet for Telegram managed bots, built with Next.js and deployed on Vercel.
 
