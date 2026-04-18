@@ -90,7 +90,7 @@ export function useVoice(): UseVoiceReturn {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     recognition.onerror = (event: any) => {
-      if (event.error === "aborted") {
+      if (event.error === "aborted" || event.error === "no-speech") {
         setIsListening(false);
         return;
       }

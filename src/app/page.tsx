@@ -498,7 +498,7 @@ function JarvisApp() {
     stopListening,
     error: voiceError,
   } = useVoice();
-  const { speak, stop: stopSpeaking, isSpeaking } = useTTS();
+  const { speak, stop: stopSpeaking, isSpeaking, words: spokenWords, currentWordIndex } = useTTS();
 
   useEffect(() => {
     if (!isReady) {
@@ -1233,6 +1233,8 @@ function JarvisApp() {
                 state={displayOrbState}
                 onPress={handleOrbPress}
                 transcript={transcript}
+                spokenWords={spokenWords}
+                currentWordIndex={currentWordIndex}
               />
             </div>
           </section>

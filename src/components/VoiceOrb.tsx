@@ -9,6 +9,8 @@ interface VoiceOrbProps {
   state: OrbState;
   onPress: () => void;
   transcript?: string;
+  spokenWords?: string[];
+  currentWordIndex?: number;
 }
 
 /**
@@ -16,7 +18,7 @@ interface VoiceOrbProps {
  * A large animated orb that serves as the primary interaction point.
  * State-driven animations via CSS classes. Dynamically responds to voice volume.
  */
-export function VoiceOrb({ state, onPress, transcript }: VoiceOrbProps) {
+export function VoiceOrb({ state, onPress, transcript, spokenWords, currentWordIndex = -1 }: VoiceOrbProps) {
   const [volume, setVolume] = useState(0.1);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -186,6 +188,28 @@ export function VoiceOrb({ state, onPress, transcript }: VoiceOrbProps) {
           {transcript}
         </div>
       )}
+
+      {state === "speaking" && spokenWords && spokenWords.length > 0 && (() => {
+        const CHUNK = 8;
+        const chunkIdx = Math.floor(Math.max(0, currentWordIndex) / CHUNK);
+        const start = chunkIdx * CHUNK;
+        const line = spokenWords.slice(start, start + CHUNK);
+        return (
+          <div className="max-w-[min(300px,84vw)] rounded-[18px] border border-white/10 bg-zinc-950/82 px-4 py-3 text-center text-[0.82rem] leading-6 backdrop-blur-xl">
+            {line.map((word, i) => (
+              <span
+                key={start + i}
+                className={cn(
+                  "transition-colors duration-150",
+                  start + i === currentWordIndex ? "text-white" : "text-zinc-500",
+                )}
+              >
+                {word}{" "}
+              </span>
+            ))}
+          </div>
+        );
+      })()}
     </div>
   );
 }

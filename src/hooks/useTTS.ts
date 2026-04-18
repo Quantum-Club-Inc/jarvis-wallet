@@ -6,12 +6,19 @@ interface UseTTSReturn {
   speak: (text: string) => void;
   stop: () => void;
   isSpeaking: boolean;
+  words: string[];
+  currentWordIndex: number;
 }
 
 export function useTTS(): UseTTSReturn {
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [words, setWords] = useState<string[]>([]);
+  const [currentWordIndex, setCurrentWordIndex] = useState(-1);
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
+  const timePerWordRef = useRef(0);
+  const lastWordIdxRef = useRef(-1);
 
   const speak = useCallback((text: string) => {
     if (typeof window === "undefined") return;
@@ -24,6 +31,12 @@ export function useTTS(): UseTTSReturn {
       URL.revokeObjectURL(objectUrlRef.current);
       objectUrlRef.current = null;
     }
+
+    const wordList = text.trim().split(/\s+/).filter(Boolean);
+    setWords(wordList);
+    setCurrentWordIndex(-1);
+    lastWordIdxRef.current = -1;
+    timePerWordRef.current = 0;
 
     fetch("/api/voice/tts", {
       method: "POST",
@@ -43,11 +56,33 @@ export function useTTS(): UseTTSReturn {
 
         setIsSpeaking(true);
 
+        audio.onloadedmetadata = () => {
+          if (wordList.length > 0) {
+            timePerWordRef.current = audio.duration / wordList.length;
+          }
+        };
+
+        audio.ontimeupdate = () => {
+          const tpw = timePerWordRef.current;
+          if (tpw === 0) return;
+          const idx = Math.min(
+            Math.floor(audio.currentTime / tpw),
+            wordList.length - 1,
+          );
+          if (idx !== lastWordIdxRef.current) {
+            lastWordIdxRef.current = idx;
+            setCurrentWordIndex(idx);
+          }
+        };
+
         audio.onended = () => {
           setIsSpeaking(false);
+          setWords([]);
+          setCurrentWordIndex(-1);
           URL.revokeObjectURL(url);
           objectUrlRef.current = null;
         };
+
         audio.onerror = () => {
           console.error(
             "[TTS] Audio playback error:",
@@ -56,16 +91,17 @@ export function useTTS(): UseTTSReturn {
             audio.error?.code,
           );
           setIsSpeaking(false);
+          setWords([]);
+          setCurrentWordIndex(-1);
           URL.revokeObjectURL(url);
           objectUrlRef.current = null;
         };
 
         audio.play().catch((err: unknown) => {
-          console.error(
-            "[TTS] audio.play() rejected (autoplay policy or decode error):",
-            err,
-          );
+          console.error("[TTS] audio.play() rejected:", err);
           setIsSpeaking(false);
+          setWords([]);
+          setCurrentWordIndex(-1);
           URL.revokeObjectURL(url);
           objectUrlRef.current = null;
           audioRef.current = null;
@@ -74,6 +110,8 @@ export function useTTS(): UseTTSReturn {
       .catch((err: unknown) => {
         console.error("[TTS] Fetch or blob error:", err);
         setIsSpeaking(false);
+        setWords([]);
+        setCurrentWordIndex(-1);
       });
   }, []);
 
@@ -87,7 +125,9 @@ export function useTTS(): UseTTSReturn {
       objectUrlRef.current = null;
     }
     setIsSpeaking(false);
+    setWords([]);
+    setCurrentWordIndex(-1);
   }, []);
 
-  return { speak, stop, isSpeaking };
+  return { speak, stop, isSpeaking, words, currentWordIndex };
 }
