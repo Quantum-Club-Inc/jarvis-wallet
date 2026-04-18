@@ -20,6 +20,13 @@ export async function POST(req: Request): Promise<Response> {
 
     const { messages, walletAddress } = body;
 
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return new Response(
+        JSON.stringify({ error: "No messages provided" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
     const result = streamText({
       model: anthropic("claude-sonnet-4-5"),
       system: buildSystemPrompt(walletAddress ?? undefined),

@@ -76,8 +76,9 @@ export function storeWalletInSecureStorage(
 ): Promise<boolean> {
   return new Promise((resolve) => {
     const tg = window.Telegram?.WebApp;
+    const hasSecureStorage = tg?.SecureStorage && tg.isVersionAtLeast?.('7.0');
 
-    if (!tg?.SecureStorage) {
+    if (!hasSecureStorage) {
       // Fallback: store in CloudStorage (less secure, but works on older clients)
       if (tg?.CloudStorage) {
         tg.CloudStorage.setItem(
@@ -114,6 +115,7 @@ export function storeWalletInSecureStorage(
     }
 
     // Use SecureStorage (preferred — iOS Keychain / Android Keystore)
+    try {
     tg.SecureStorage.setItem(
       STORAGE_KEY_MNEMONIC,
       JSON.stringify(mnemonic),
@@ -132,6 +134,16 @@ export function storeWalletInSecureStorage(
         );
       },
     );
+    } catch (e) {
+      console.warn('[Wallet] SecureStorage threw, falling back to localStorage:', e);
+      try {
+        localStorage.setItem(STORAGE_KEY_MNEMONIC, JSON.stringify(mnemonic));
+        localStorage.setItem(STORAGE_KEY_ADDRESS, address);
+        resolve(true);
+      } catch {
+        resolve(false);
+      }
+    }
   });
 }
 
@@ -145,8 +157,9 @@ export function loadWalletFromSecureStorage(): Promise<{
 } | null> {
   return new Promise((resolve) => {
     const tg = window.Telegram?.WebApp;
+    const hasSecureStorage = tg?.SecureStorage && tg.isVersionAtLeast?.('7.0');
 
-    if (!tg?.SecureStorage) {
+    if (!hasSecureStorage) {
       // Fallback: CloudStorage
       if (tg?.CloudStorage) {
         tg.CloudStorage.getItem(STORAGE_KEY_MNEMONIC, (err, value) => {
@@ -185,6 +198,7 @@ export function loadWalletFromSecureStorage(): Promise<{
     }
 
     // Use SecureStorage
+    try {
     tg.SecureStorage.getItem(STORAGE_KEY_MNEMONIC, (err, value) => {
       if (err || !value) {
         resolve(null);
@@ -202,5 +216,19 @@ export function loadWalletFromSecureStorage(): Promise<{
         }
       });
     });
+    } catch (e) {
+      console.warn('[Wallet] SecureStorage threw, falling back to localStorage:', e);
+      try {
+        const mnemonicStr = localStorage.getItem(STORAGE_KEY_MNEMONIC);
+        const address = localStorage.getItem(STORAGE_KEY_ADDRESS);
+        if (mnemonicStr && address) {
+          resolve({ mnemonic: JSON.parse(mnemonicStr), address });
+        } else {
+          resolve(null);
+        }
+      } catch {
+        resolve(null);
+      }
+    }
   });
 }
