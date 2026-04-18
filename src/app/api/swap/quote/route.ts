@@ -293,6 +293,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     return NextResponse.json({
       rfqId: quoteEvent.rfqId,
       quoteId: quote.quoteId,
+      quotePayload: quote,
       resolverName: quote.resolverName,
       offerToken: {
         symbol: offerToken.symbol,
