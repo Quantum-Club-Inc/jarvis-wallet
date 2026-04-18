@@ -4,6 +4,8 @@ import { type FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
 import { AnimatePresence, motion } from "framer-motion";
+import { Cell, internal, loadStateInit, SendMode } from "@ton/core";
+import { TonClient, WalletContractV4 } from "@ton/ton";
 import {
   ArrowLeftRight,
   ArrowRight,
@@ -38,6 +40,7 @@ import { cn } from "@/lib/utils";
 import {
   generateWallet,
   loadWalletFromSecureStorage,
+  restoreWalletFromMnemonic,
   storeWalletInSecureStorage,
 } from "@/lib/ton/wallet-client";
 import { KNOWN_TOKENS } from "@/lib/defi/tokens";
@@ -67,6 +70,7 @@ const FIRST_TIME_INTRO_MESSAGES = [
 const FIRST_TIME_INTRO_INTERVAL_MS = 3000;
 const WALLET_STORAGE_TIMEOUT_MS = 5000;
 const WELCOME_STORAGE_TIMEOUT_MS = 3000;
+const TONCENTER_RPC_ENDPOINT = "https://toncenter.com/api/v2/jsonRPC";
 const WALLET_PAGES = [
   { id: "home", label: "Home" },
   { id: "swap", label: "Swap" },
@@ -115,6 +119,7 @@ interface SwapRoutePreview {
 interface SwapQuoteResponse {
   rfqId: string;
   quoteId: string;
+  quotePayload: unknown;
   resolverName: string;
   offerToken: {
     symbol: string;
@@ -133,6 +138,18 @@ interface SwapQuoteResponse {
   gasBudget: string;
   estimatedGasConsumption: string;
   routes: SwapRoutePreview[];
+}
+
+interface SwapExecuteMessage {
+  targetAddress: string;
+  sendAmount: string;
+  payload: string;
+  jettonWalletStateInit?: string;
+}
+
+interface SwapExecuteResponse {
+  quoteId: string;
+  messages: SwapExecuteMessage[];
 }
 
 interface StakeOverviewResponse {
@@ -299,6 +316,15 @@ function withTimeout<T>(
         resolve(fallback);
       });
   });
+}
+
+function parseCellFromHex(rawHex?: string): Cell | undefined {
+  const hex = rawHex?.trim();
+  if (!hex) {
+    return undefined;
+  }
+
+  return Cell.fromHex(hex);
 }
 
 function InitialLoader() {
@@ -477,6 +503,8 @@ function JarvisApp() {
   const [swapQuote, setSwapQuote] = useState<SwapQuoteResponse | null>(null);
   const [swapLoading, setSwapLoading] = useState(false);
   const [swapError, setSwapError] = useState<string | null>(null);
+  const [swapExecuting, setSwapExecuting] = useState(false);
+  const [swapSuccess, setSwapSuccess] = useState<string | null>(null);
   const swapQuoteAbortRef = useRef<AbortController | null>(null);
   const swapQuoteCacheRef = useRef<Map<string, SwapQuoteResponse>>(new Map());
   const [stakeOverview, setStakeOverview] = useState<StakeOverviewResponse | null>(null);
@@ -1053,6 +1081,7 @@ function JarvisApp() {
 
     setSwapLoading(true);
     setSwapError(null);
+    setSwapSuccess(null);
     setSwapQuote(null);
 
     try {
@@ -1104,6 +1133,99 @@ function JarvisApp() {
     }
   }, [selectedSwapFrom, selectedSwapTo, swapAmount]);
 
+  const handleSwapExecution = useCallback(async () => {
+    if (!walletAddress) {
+      setSwapError("Wallet is not ready yet.");
+      return;
+    }
+
+    if (!swapQuote) {
+      setSwapError("Get a quote before swapping.");
+      return;
+    }
+
+    setSwapExecuting(true);
+    setSwapError(null);
+    setSwapSuccess(null);
+
+    try {
+      const storedWallet = await loadWalletFromSecureStorage();
+      if (!storedWallet?.mnemonic || storedWallet.mnemonic.length === 0) {
+        throw new Error("Wallet credentials are unavailable on this device.");
+      }
+
+      const restoredWallet = await restoreWalletFromMnemonic(storedWallet.mnemonic);
+      if (restoredWallet.address !== walletAddress) {
+        throw new Error("Wallet key mismatch. Re-open the app and try again.");
+      }
+
+      const executionResponse = await fetch("/api/swap/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          quoteId: swapQuote.quoteId,
+          quotePayload: swapQuote.quotePayload,
+          walletAddress,
+        }),
+      });
+
+      const executionPayload = (await executionResponse.json()) as unknown;
+      if (!executionResponse.ok) {
+        const message = (
+          typeof executionPayload === "object"
+          && executionPayload !== null
+          && "error" in executionPayload
+          && typeof (executionPayload as { error?: unknown }).error === "string"
+        )
+          ? (executionPayload as { error: string }).error
+          : "Failed to prepare swap execution.";
+        throw new Error(message);
+      }
+
+      const execution = executionPayload as SwapExecuteResponse;
+      if (!Array.isArray(execution.messages) || execution.messages.length === 0) {
+        throw new Error("No execution messages were returned.");
+      }
+
+      const tonClient = new TonClient({
+        endpoint: TONCENTER_RPC_ENDPOINT,
+      });
+      const wallet = WalletContractV4.create({
+        workchain: 0,
+        publicKey: restoredWallet.keyPair.publicKey,
+      });
+      const openedWallet = tonClient.open(wallet);
+      const seqno = await openedWallet.getSeqno();
+
+      const transferMessages = execution.messages.map((message) => {
+        const body = parseCellFromHex(message.payload);
+        const stateInitCell = parseCellFromHex(message.jettonWalletStateInit);
+
+        return internal({
+          to: message.targetAddress,
+          value: BigInt(message.sendAmount),
+          body,
+          init: stateInitCell ? loadStateInit(stateInitCell.beginParse()) : undefined,
+        });
+      });
+
+      await openedWallet.sendTransfer({
+        seqno,
+        secretKey: restoredWallet.keyPair.secretKey,
+        sendMode: SendMode.PAY_GAS_SEPARATELY,
+        messages: transferMessages,
+      });
+
+      setSwapSuccess("Swap submitted on-chain. Track your balance for settlement.");
+    } catch (error) {
+      setSwapError(
+        error instanceof Error ? error.message : "Failed to submit swap transaction.",
+      );
+    } finally {
+      setSwapExecuting(false);
+    }
+  }, [swapQuote, walletAddress]);
+
   const flipSwapPair = useCallback(() => {
     setSwapFromSymbol((currentFrom) => {
       setSwapToSymbol(currentFrom);
@@ -1111,6 +1233,7 @@ function JarvisApp() {
     });
     setSwapQuote(null);
     setSwapError(null);
+    setSwapSuccess(null);
   }, [swapToSymbol]);
 
   if (!isReady || walletLoading || !welcomeReady) {
@@ -1308,6 +1431,7 @@ function JarvisApp() {
                       setSwapFromSymbol(symbol);
                       setSwapQuote(null);
                       setSwapError(null);
+                      setSwapSuccess(null);
                     }}
                   />
                 )}
@@ -1325,6 +1449,7 @@ function JarvisApp() {
                       setSwapToSymbol(symbol);
                       setSwapQuote(null);
                       setSwapError(null);
+                      setSwapSuccess(null);
                     }}
                   />
                 )}
@@ -1345,6 +1470,7 @@ function JarvisApp() {
                   setSwapAmount(event.target.value);
                   setSwapQuote(null);
                   setSwapError(null);
+                  setSwapSuccess(null);
                 }}
               />
             </label>
@@ -1434,6 +1560,15 @@ function JarvisApp() {
                     ))}
                   </div>
                 )}
+
+                <Button
+                  type="button"
+                  className="h-11 w-full rounded-xl bg-white text-zinc-900 hover:bg-zinc-100"
+                  disabled={swapExecuting || swapLoading}
+                  onClick={handleSwapExecution}
+                >
+                  {swapExecuting ? "Submitting swap..." : "Swap now"}
+                </Button>
               </div>
             ) : (
               <div className="rounded-xl border border-white/10 bg-zinc-950/45 px-3 py-2.5 text-xs text-zinc-400">
@@ -1444,6 +1579,12 @@ function JarvisApp() {
                   <span>{selectedSwapTo?.symbol ?? swapToSymbol}</span>
                 </span>
                 .
+              </div>
+            )}
+
+            {swapSuccess && (
+              <div className="rounded-xl border border-emerald-300/30 bg-emerald-900/20 px-3 py-2 text-sm text-emerald-200">
+                {swapSuccess}
               </div>
             )}
           </div>
