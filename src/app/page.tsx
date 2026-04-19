@@ -600,6 +600,7 @@ function JarvisApp() {
   const [importWalletLoading, setImportWalletLoading] = useState(false);
   const [importWalletError, setImportWalletError] = useState<string | null>(null);
   const [importWalletSuccess, setImportWalletSuccess] = useState<string | null>(null);
+  const [walletSummaryReloadKey, setWalletSummaryReloadKey] = useState(0);
 
   const {
     transcript,
@@ -730,7 +731,7 @@ function JarvisApp() {
     return () => {
       active = false;
     };
-  }, [walletAddress]);
+  }, [walletAddress, walletSummaryReloadKey]);
 
   useEffect(() => {
     let active = true;
@@ -1211,6 +1212,7 @@ function JarvisApp() {
         setWalletAddress(wallet.address);
         setWalletBalance(null);
         setWalletSummary(null);
+        setWalletSummaryReloadKey((current) => current + 1);
         setNewMnemonic(null);
         setSeedPhraseWords(null);
         setSeedPhraseVisible(false);
@@ -1796,12 +1798,11 @@ function JarvisApp() {
             </div>
           </section>
         ) : null
-      ) : walletPage === "swap" ? (
+        ) : walletPage === "swap" ? (
         <section className="relative z-10 flex flex-col">
           <div>
-            <p className="text-[0.72rem] font-medium tracking-[0.14em] text-cyan-200/75">Swap</p>
-            <h2 className="mt-1 text-[1.28rem] leading-tight font-semibold text-zinc-100">
-              STON.fi Omniston quotes
+            <h2 className="text-[1.28rem] leading-tight font-semibold text-zinc-100">
+              Swaps
             </h2>
             <p className="mt-2 text-sm leading-[1.55] text-zinc-300">
               Select a token pair, request a live quote, then review the route before execution.

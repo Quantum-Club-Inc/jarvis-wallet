@@ -106,7 +106,7 @@ async function handleTextMessage(botToken: string, message: TelegramMessage): Pr
 
     const result = await generateText({
       model: getAgentModel(),
-      system: buildSystemPrompt(walletAddress),
+      system: buildSystemPrompt(walletAddress, "chat", null, true),
       messages: await convertToModelMessages([
         {
           role: "user" as const,

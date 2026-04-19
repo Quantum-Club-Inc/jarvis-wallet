@@ -78,32 +78,7 @@ export function storeWalletInSecureStorage(
     const tg = window.Telegram?.WebApp;
     const hasSecureStorage = tg?.SecureStorage && tg.isVersionAtLeast?.('7.0');
 
-    if (!hasSecureStorage) {
-      // Fallback: store in CloudStorage (less secure, but works on older clients)
-      if (tg?.CloudStorage) {
-        tg.CloudStorage.setItem(
-          STORAGE_KEY_MNEMONIC,
-          JSON.stringify(mnemonic),
-          (err) => {
-            if (err) {
-              console.error("[Wallet] CloudStorage setItem error:", err);
-              resolve(false);
-              return;
-            }
-            tg.CloudStorage.setItem(
-              STORAGE_KEY_ADDRESS,
-              address,
-              (err2) => {
-                resolve(!err2);
-              },
-            );
-          },
-        );
-        return;
-      }
-
-      // No storage available (dev mode) — use localStorage
-      console.warn("[Wallet] No SecureStorage or CloudStorage — using localStorage (dev mode only)");
+    const writeToLocalStorage = () => {
       try {
         localStorage.setItem(STORAGE_KEY_MNEMONIC, JSON.stringify(mnemonic));
         localStorage.setItem(STORAGE_KEY_ADDRESS, address);
@@ -111,38 +86,60 @@ export function storeWalletInSecureStorage(
       } catch {
         resolve(false);
       }
+    };
+
+    if (!hasSecureStorage) {
+      if (tg?.CloudStorage) {
+        tg.CloudStorage.setItem(STORAGE_KEY_MNEMONIC, JSON.stringify(mnemonic), (err) => {
+          if (err) { writeToLocalStorage(); return; }
+          tg.CloudStorage.setItem(STORAGE_KEY_ADDRESS, address, (err2) => {
+            if (err2) { writeToLocalStorage(); return; }
+            resolve(true);
+          });
+        });
+        return;
+      }
+      writeToLocalStorage();
       return;
     }
 
+    const fallbackToCloudStorage = () => {
+      if (tg.CloudStorage) {
+        tg.CloudStorage.setItem(STORAGE_KEY_MNEMONIC, JSON.stringify(mnemonic), (err) => {
+          if (err) { writeToLocalStorage(); return; }
+          tg.CloudStorage.setItem(STORAGE_KEY_ADDRESS, address, (err2) => {
+            if (err2) { writeToLocalStorage(); return; }
+            resolve(true);
+          });
+        });
+      } else {
+        writeToLocalStorage();
+      }
+    };
+
     // Use SecureStorage (preferred — iOS Keychain / Android Keystore)
     try {
-    tg.SecureStorage.setItem(
-      STORAGE_KEY_MNEMONIC,
-      JSON.stringify(mnemonic),
-      (err, success) => {
-        if (err || !success) {
-          console.error("[Wallet] SecureStorage setItem error:", err);
-          resolve(false);
-          return;
-        }
-        tg.SecureStorage.setItem(
-          STORAGE_KEY_ADDRESS,
-          address,
-          (err2, success2) => {
-            resolve(!err2 && !!success2);
-          },
-        );
-      },
-    );
-    } catch (e) {
-      console.warn('[Wallet] SecureStorage threw, falling back to localStorage:', e);
-      try {
-        localStorage.setItem(STORAGE_KEY_MNEMONIC, JSON.stringify(mnemonic));
-        localStorage.setItem(STORAGE_KEY_ADDRESS, address);
-        resolve(true);
-      } catch {
-        resolve(false);
-      }
+      tg.SecureStorage.setItem(
+        STORAGE_KEY_MNEMONIC,
+        JSON.stringify(mnemonic),
+        (err, success) => {
+          if (err || !success) {
+            console.warn("[Wallet] SecureStorage setItem error:", err, "— falling back");
+            fallbackToCloudStorage();
+            return;
+          }
+          tg.SecureStorage.setItem(
+            STORAGE_KEY_ADDRESS,
+            address,
+            (err2, success2) => {
+              if (err2 || !success2) { fallbackToCloudStorage(); return; }
+              resolve(true);
+            },
+          );
+        },
+      );
+    } catch {
+      fallbackToCloudStorage();
     }
   });
 }
@@ -159,76 +156,48 @@ export function loadWalletFromSecureStorage(): Promise<{
     const tg = window.Telegram?.WebApp;
     const hasSecureStorage = tg?.SecureStorage && tg.isVersionAtLeast?.('7.0');
 
-    if (!hasSecureStorage) {
-      // Fallback: CloudStorage
-      if (tg?.CloudStorage) {
-        tg.CloudStorage.getItem(STORAGE_KEY_MNEMONIC, (err, value) => {
-          if (err || !value) {
-            resolve(null);
-            return;
-          }
-          tg.CloudStorage.getItem(STORAGE_KEY_ADDRESS, (err2, addr) => {
-            if (err2 || !addr) {
-              resolve(null);
-              return;
-            }
-            try {
-              resolve({ mnemonic: JSON.parse(value), address: addr });
-            } catch {
-              resolve(null);
-            }
-          });
-        });
-        return;
-      }
-
-      // Dev mode fallback
+    const readFromLocalStorage = () => {
       try {
         const mnemonicStr = localStorage.getItem(STORAGE_KEY_MNEMONIC);
-        const address = localStorage.getItem(STORAGE_KEY_ADDRESS);
-        if (mnemonicStr && address) {
-          resolve({ mnemonic: JSON.parse(mnemonicStr), address });
-        } else {
-          resolve(null);
-        }
-      } catch {
-        resolve(null);
-      }
+        const addr = localStorage.getItem(STORAGE_KEY_ADDRESS);
+        if (mnemonicStr && addr) resolve({ mnemonic: JSON.parse(mnemonicStr), address: addr });
+        else resolve(null);
+      } catch { resolve(null); }
+    };
+
+    const readFromCloudStorage = (onMissing: () => void) => {
+      if (!tg?.CloudStorage) { onMissing(); return; }
+      tg.CloudStorage.getItem(STORAGE_KEY_MNEMONIC, (err, value) => {
+        if (err || !value) { onMissing(); return; }
+        tg.CloudStorage.getItem(STORAGE_KEY_ADDRESS, (err2, addr) => {
+          if (err2 || !addr) { onMissing(); return; }
+          try { resolve({ mnemonic: JSON.parse(value), address: addr }); }
+          catch { onMissing(); }
+        });
+      });
+    };
+
+    if (!hasSecureStorage) {
+      readFromCloudStorage(readFromLocalStorage);
       return;
     }
 
-    // Use SecureStorage
+    // Use SecureStorage (preferred)
     try {
-    tg.SecureStorage.getItem(STORAGE_KEY_MNEMONIC, (err, value) => {
-      if (err || !value) {
-        resolve(null);
-        return;
-      }
-      tg.SecureStorage.getItem(STORAGE_KEY_ADDRESS, (err2, addr) => {
-        if (err2 || !addr) {
-          resolve(null);
+      tg.SecureStorage.getItem(STORAGE_KEY_MNEMONIC, (err, value) => {
+        if (err || !value) {
+          if (err) console.warn("[Wallet] SecureStorage getItem error:", err, "— falling back");
+          readFromCloudStorage(readFromLocalStorage);
           return;
         }
-        try {
-          resolve({ mnemonic: JSON.parse(value), address: addr });
-        } catch {
-          resolve(null);
-        }
+        tg.SecureStorage.getItem(STORAGE_KEY_ADDRESS, (err2, addr) => {
+          if (err2 || !addr) { readFromCloudStorage(readFromLocalStorage); return; }
+          try { resolve({ mnemonic: JSON.parse(value), address: addr }); }
+          catch { readFromCloudStorage(readFromLocalStorage); }
+        });
       });
-    });
-    } catch (e) {
-      console.warn('[Wallet] SecureStorage threw, falling back to localStorage:', e);
-      try {
-        const mnemonicStr = localStorage.getItem(STORAGE_KEY_MNEMONIC);
-        const address = localStorage.getItem(STORAGE_KEY_ADDRESS);
-        if (mnemonicStr && address) {
-          resolve({ mnemonic: JSON.parse(mnemonicStr), address });
-        } else {
-          resolve(null);
-        }
-      } catch {
-        resolve(null);
-      }
+    } catch {
+      readFromCloudStorage(readFromLocalStorage);
     }
   });
 }

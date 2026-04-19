@@ -156,7 +156,7 @@ export function createAgentTools(options?: string | CreateAgentToolsOptions) {
     requestOrigin,
   } = resolvedOptions;
   const resolvedDefaultWalletAddress = defaultWalletAddress?.trim() || undefined;
-  const shouldExecuteViaN8n = interactionMode === "voice";
+  const shouldExecuteViaN8n = interactionMode !== "overview";
 
   return {
     check_balance: tool({
@@ -210,7 +210,7 @@ export function createAgentTools(options?: string | CreateAgentToolsOptions) {
 
     swap_tokens: tool({
     description:
-      "Swap tool. In voice mode executes swap through n8n automation; in chat mode returns STON.fi preview for confirmation.",
+      "Swap tool. In chat and voice modes executes swap through n8n automation; in overview mode returns STON.fi preview.",
     inputSchema: z.object({
       fromToken: z
         .string()
@@ -296,7 +296,7 @@ export function createAgentTools(options?: string | CreateAgentToolsOptions) {
 
     stake_ton: tool({
     description:
-      "Stake TON tool. In voice mode executes staking through n8n automation; in chat mode prepares staking details for confirmation.",
+      "Stake TON tool. In chat and voice modes executes staking through n8n automation; in overview mode prepares staking details.",
     inputSchema: z.object({
       amount: z
         .string()

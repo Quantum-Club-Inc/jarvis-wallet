@@ -88,7 +88,8 @@ This repo includes an n8n-ready webhook endpoint that can run swap/stake actions
 
 Jarvis agent behavior:
 - In **VOICE mode**, `swap_tokens` and `stake_ton` execute through the n8n automation path automatically.
-- In **CHAT mode**, those tools remain confirmation-first (preview/prepare).
+- In **CHAT mode**, direct swap/stake commands also execute through n8n automation.
+- In **OVERVIEW mode**, swap/stake remain preview-style and do not submit.
 
 ### 1) Configure n8n Webhook node
 

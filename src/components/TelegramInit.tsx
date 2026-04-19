@@ -165,8 +165,9 @@ function getInitialTelegramContext(): TelegramContextValue {
 
   return {
     ...DEFAULT_CONTEXT,
-    ...readTelegramState(tg),
-    isReady: true,
+    isTelegram: true,
+    viewportHeight: window.innerHeight,
+    isReady: false,
   };
 }
 
@@ -177,7 +178,7 @@ export function TelegramInit({ children }: { children: ReactNode }) {
   const [ctx, setCtx] = useState<TelegramContextValue>(getInitialTelegramContext);
   const [authState, setAuthState] = useState<TelegramAuthState>("idle");
   const [authError, setAuthError] = useState<string | null>(null);
-  const authAttemptedRef = useRef(false);
+  const attemptedInitDataRef = useRef<string | null>(null);
 
   useEffect(() => {
     const tg = window.Telegram?.WebApp;
@@ -283,11 +284,11 @@ export function TelegramInit({ children }: { children: ReactNode }) {
       return;
     }
 
-    if (authAttemptedRef.current) {
+    if (attemptedInitDataRef.current === initData) {
       return;
     }
 
-    authAttemptedRef.current = true;
+    attemptedInitDataRef.current = initData;
     let active = true;
 
     void (async () => {
