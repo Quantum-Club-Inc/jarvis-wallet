@@ -1,6 +1,6 @@
 "use client";
 
-import { auth } from "@/lib/firebase/client";
+import { auth, firebaseClientConfigError } from "@/lib/firebase/client";
 import {
   ParsedToken,
   signInWithCustomToken,
@@ -25,6 +25,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [customClaims, setCustomClaims] = useState<ParsedToken | null>(null);
 
   useEffect(() => {
+    if (!auth) {
+      if (firebaseClientConfigError) {
+        console.error(firebaseClientConfigError);
+      }
+      return;
+    }
+
     const unsubscribe = auth.onAuthStateChanged(async (user: User | null) => {
       setCurrentUser(user ?? null);
       if (user) {
@@ -48,11 +55,23 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   const logout = useCallback(async () => {
+    if (!auth) {
+      return;
+    }
     await auth.signOut();
   }, []);
 
   const loginWithTelegram = useCallback(
     async ({ initData }: { initData: string }) => {
+      if (!auth) {
+        return {
+          success: false,
+          error:
+            firebaseClientConfigError ??
+            "Firebase client configuration is missing. Check NEXT_PUBLIC_FIREBASE_* vars.",
+        };
+      }
+
       try {
         const response = await fetch("/api/auth/telegram", {
           method: "POST",
@@ -75,6 +94,18 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           error: data.error || "An unknown error occurred during Telegram sign-in.",
         };
       } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (
+          message.includes("auth/api-key-not-valid") ||
+          message.includes("auth/invalid-api-key")
+        ) {
+          return {
+            success: false,
+            error:
+              "Firebase Web API key is invalid. Use your Firebase project's Web API key in NEXT_PUBLIC_FIREBASE_API_KEY.",
+          };
+        }
+
         console.error("Error during Telegram login:", error);
         return {
           success: false,

@@ -113,7 +113,12 @@ async function handleTextMessage(botToken: string, message: TelegramMessage): Pr
           parts: [{ type: "text" as const, text }],
         },
       ]),
-      tools: createAgentTools(walletAddress),
+      maxOutputTokens: 220,
+      tools: createAgentTools({
+        defaultWalletAddress: walletAddress,
+        interactionMode: "chat",
+        requestOrigin: process.env.APP_BASE_URL ?? process.env.VERCEL_URL,
+      }),
       stopWhen: stepCountIs(5),
       providerOptions: agentProviderOptions,
     });

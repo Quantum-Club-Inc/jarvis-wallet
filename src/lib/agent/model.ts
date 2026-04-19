@@ -13,7 +13,7 @@ const google = createGoogleGenerativeAI({
 });
 
 export const agentModelId =
-  process.env.JARVIS_AGENT_MODEL ?? "gemini-flash-latest";
+  process.env.JARVIS_AGENT_MODEL ?? "gemini-3-flash-preview";
 
 function getGoogleOptionsForModel(
   modelId: string,
@@ -21,7 +21,7 @@ function getGoogleOptionsForModel(
   if (modelId === "gemini-flash-latest" || modelId.startsWith("gemini-3")) {
     return {
       thinkingConfig: {
-        thinkingLevel: "high",
+        thinkingLevel: "medium",
       },
     };
   }

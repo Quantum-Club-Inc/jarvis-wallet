@@ -14,6 +14,7 @@ import {
   House,
   MessageCircle,
   Mic,
+  MicOff,
   TrendingUp,
 } from "lucide-react";
 
@@ -54,7 +55,7 @@ const QUICK_PROMPTS = [
 
 const WELCOME_STORAGE_NAMESPACE = "jarvis_welcome_v1";
 const APP_SHELL_CLASS =
-  "relative mx-auto flex h-[var(--tg-viewport-height)] min-h-dvh w-full max-w-[480px] flex-col overflow-hidden px-[max(16px,calc(var(--tg-content-safe-area-inset-left)+16px))] pt-[calc(var(--tg-content-safe-area-inset-top)+36px)] pb-[max(14px,calc(var(--tg-content-safe-area-inset-bottom)+14px))] pr-[max(16px,calc(var(--tg-content-safe-area-inset-right)+16px))]";
+  "relative mx-auto flex h-[var(--tg-viewport-height)] min-h-dvh w-full max-w-[480px] flex-col overflow-x-hidden overflow-y-auto px-[max(16px,calc(var(--tg-content-safe-area-inset-left)+16px))] pt-[calc(var(--tg-content-safe-area-inset-top)+36px)] pb-[max(24px,calc(var(--tg-content-safe-area-inset-bottom)+34px))] pr-[max(16px,calc(var(--tg-content-safe-area-inset-right)+16px))]";
 const FLOATING_NAV_HEIGHT = 78;
 const FLOATING_NAV_BOTTOM_OFFSET = 36;
 const LOADER_MESSAGES = [
@@ -69,6 +70,9 @@ const FIRST_TIME_INTRO_MESSAGES = [
   "Are you ready for the future?",
 ] as const;
 const FIRST_TIME_INTRO_INTERVAL_MS = 3000;
+const VOICE_AUTO_RESUME_DELAY_MS = 1300;
+const VOICE_POST_SPEECH_COOLDOWN_MS = 1800;
+const VOICE_ECHO_GUARD_WINDOW_MS = 8000;
 const WALLET_STORAGE_TIMEOUT_MS = 5000;
 const WELCOME_STORAGE_TIMEOUT_MS = 3000;
 const TONCENTER_RPC_ENDPOINT = "https://toncenter.com/api/v2/jsonRPC";
@@ -328,6 +332,63 @@ function parseCellFromHex(rawHex?: string): Cell | undefined {
   return Cell.fromHex(hex);
 }
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function readApiError(payload: unknown, fallback: string): string {
+  if (isObjectRecord(payload) && typeof payload.error === "string") {
+    return payload.error;
+  }
+
+  return fallback;
+}
+
+function extractMessageText(message: UIMessage): string {
+  return message.parts
+    .filter((part): part is { type: "text"; text: string } => (
+      part.type === "text"
+      && typeof part.text === "string"
+      && part.text.trim().length > 0
+    ))
+    .map((part) => part.text.trim())
+    .join("\n\n")
+    .trim();
+}
+
+function normalizeSpeechSnippet(input: string): string[] {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .map((word) => word.trim())
+    .filter((word) => word.length > 2);
+}
+
+function isLikelySpeechEcho(transcript: string, spokenText: string): boolean {
+  const transcriptWords = normalizeSpeechSnippet(transcript);
+  const spokenWords = normalizeSpeechSnippet(spokenText);
+  if (transcriptWords.length === 0 || spokenWords.length === 0) {
+    return false;
+  }
+
+  const transcriptSet = new Set(transcriptWords);
+  const spokenSet = new Set(spokenWords);
+  let sharedCount = 0;
+  for (const word of transcriptSet) {
+    if (spokenSet.has(word)) {
+      sharedCount += 1;
+    }
+  }
+
+  if (sharedCount < 3) {
+    return false;
+  }
+
+  const overlapRatio = sharedCount / Math.min(transcriptSet.size, spokenSet.size);
+  return overlapRatio >= 0.65;
+}
+
 function InitialLoader() {
   const [messageIndex, setMessageIndex] = useState(0);
 
@@ -363,7 +424,15 @@ function InitialLoader() {
 function FirstTimeIntro({ message }: { message: string }) {
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center px-[max(24px,calc(var(--tg-content-safe-area-inset-left)+24px))] pt-[max(24px,calc(var(--tg-content-safe-area-inset-top)+24px))] pb-[max(24px,calc(var(--tg-content-safe-area-inset-bottom)+24px))] pr-[max(24px,calc(var(--tg-content-safe-area-inset-right)+24px))]">
-      <div className="w-full max-w-[520px] text-center">
+      <div className="flex w-full max-w-[520px] flex-col items-center gap-7 text-center">
+        <Image
+          src="/jarvis-logo.svg"
+          alt="Jarvis"
+          width={182}
+          height={56}
+          className="h-[56px] w-auto opacity-95"
+          priority
+        />
         <AnimatePresence mode="wait">
           <motion.p
             key={message}
@@ -494,12 +563,11 @@ function JarvisApp() {
   const [walletSummary, setWalletSummary] = useState<WalletSummary | null>(null);
   const [walletPage, setWalletPage] = useState<WalletPage>("home");
   const [homeMode, setHomeMode] = useState<HomeMode>("overview");
-  const [orbState, setOrbState] = useState<OrbState>("idle");
   const [textInput, setTextInput] = useState("");
   const [swapTokens, setSwapTokens] = useState<SwapTokenOption[]>(FALLBACK_SWAP_TOKENS);
   const [swapTokensLoading, setSwapTokensLoading] = useState(true);
   const [swapFromSymbol, setSwapFromSymbol] = useState("TON");
-  const [swapToSymbol, setSwapToSymbol] = useState("USDT");
+  const [swapToSymbol, setSwapToSymbol] = useState("STON");
   const [swapAmount, setSwapAmount] = useState("1");
   const [swapQuote, setSwapQuote] = useState<SwapQuoteResponse | null>(null);
   const [swapLoading, setSwapLoading] = useState(false);
@@ -508,20 +576,36 @@ function JarvisApp() {
   const [swapSuccess, setSwapSuccess] = useState<string | null>(null);
   const swapQuoteAbortRef = useRef<AbortController | null>(null);
   const swapQuoteCacheRef = useRef<Map<string, SwapQuoteResponse>>(new Map());
+  const voiceModeAutoOpenedRef = useRef(false);
+  const lastSpokenAssistantTextRef = useRef("");
+  const speakingWasActiveRef = useRef(false);
+  const lastSpeakingEndedAtRef = useRef(0);
+  const [voiceAutoResumeEnabled, setVoiceAutoResumeEnabled] = useState(true);
   const [stakeOverview, setStakeOverview] = useState<StakeOverviewResponse | null>(null);
   const [stakeLoading, setStakeLoading] = useState(false);
   const [stakeError, setStakeError] = useState<string | null>(null);
   const [stakeAmountInput, setStakeAmountInput] = useState("10");
+  const [seedPhraseWords, setSeedPhraseWords] = useState<string[] | null>(null);
+  const [seedPhraseVisible, setSeedPhraseVisible] = useState(false);
+  const [seedPhraseLoading, setSeedPhraseLoading] = useState(false);
+  const [seedPhraseError, setSeedPhraseError] = useState<string | null>(null);
   const [walletLoading, setWalletLoading] = useState(true);
   const [welcomeMode, setWelcomeMode] = useState<"first" | "returning">("first");
   const [welcomeReady, setWelcomeReady] = useState(false);
   const [newMnemonic, setNewMnemonic] = useState<string[] | null>(null);
   const [introMessageIndex, setIntroMessageIndex] = useState(0);
   const [isFirstTimeIntroDone, setIsFirstTimeIntroDone] = useState(false);
+  const [importWalletOpen, setImportWalletOpen] = useState(false);
+  const [importMnemonicInput, setImportMnemonicInput] = useState("");
+  const [importWalletLoading, setImportWalletLoading] = useState(false);
+  const [importWalletError, setImportWalletError] = useState<string | null>(null);
+  const [importWalletSuccess, setImportWalletSuccess] = useState<string | null>(null);
 
   const {
     transcript,
     isListening,
+    isTranscribing,
+    voiceLevel,
     resetTranscript,
     startListening,
     stopListening,
@@ -529,24 +613,24 @@ function JarvisApp() {
   } = useVoice();
   const { speak, stop: stopSpeaking, isSpeaking, words: spokenWords, currentWordIndex } = useTTS();
 
+  const syncWalletToFirestore = useCallback(async (address: string) => {
+    try {
+      await fetch("/api/wallet/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ walletAddress: address }),
+      });
+    } catch (err) {
+      console.warn("[Wallet] Failed to sync address to Firestore:", err);
+    }
+  }, []);
+
   useEffect(() => {
     if (!isReady) {
       return;
     }
 
     let active = true;
-
-    async function syncWalletToFirestore(address: string) {
-      try {
-        await fetch("/api/wallet/sync", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ walletAddress: address }),
-        });
-      } catch (err) {
-        console.warn("[Wallet] Failed to sync address to Firestore:", err);
-      }
-    }
 
     async function initWallet() {
       try {
@@ -604,7 +688,7 @@ function JarvisApp() {
     return () => {
       active = false;
     };
-  }, [isReady]);
+  }, [isReady, syncWalletToFirestore]);
 
   useEffect(() => {
     if (!walletAddress) {
@@ -846,10 +930,36 @@ function JarvisApp() {
     };
   }, [isReady, walletLoading, welcomeMode, welcomeReady]);
 
+  useEffect(() => {
+    if (!isReady || walletLoading || !welcomeReady || walletPage !== "home") {
+      return;
+    }
+    if (voiceModeAutoOpenedRef.current) {
+      return;
+    }
+
+    voiceModeAutoOpenedRef.current = true;
+    setVoiceAutoResumeEnabled(true);
+    setHomeMode("voice");
+  }, [isReady, walletLoading, walletPage, welcomeReady]);
+
   const { messages, sendMessage, status, error: chatError } = useChat({
     transport: new DefaultChatTransport({
       api: "/api/chat",
-      body: { walletAddress, isFirstTime: welcomeMode === "first", newMnemonic: newMnemonic?.join(" ") },
+      body: {
+        walletAddress,
+        walletContext: walletSummary
+          ? {
+              totalUsd: walletSummary.totalUsd,
+              totalTon: walletSummary.totalTon,
+              assets: walletSummary.assets.slice(0, 20),
+            }
+          : null,
+        n8nAutomationEnabled: true,
+        isFirstTime: welcomeMode === "first",
+        newMnemonic: newMnemonic?.join(" "),
+        interactionMode: homeMode,
+      },
     }),
     onFinish: ({ message }: { message: UIMessage }) => {
       if (message.role !== "assistant") {
@@ -858,13 +968,11 @@ function JarvisApp() {
 
       const textPart = message.parts.find((part) => part.type === "text" && part.text);
       if (textPart?.type === "text" && textPart.text) {
+        lastSpokenAssistantTextRef.current = textPart.text;
         speak(textPart.text);
       }
     },
-    onError: () => {
-      setOrbState("error");
-      setTimeout(() => setOrbState("idle"), 2000);
-    },
+    onError: () => undefined,
   });
 
   const isLoading = status === "submitted" || status === "streaming";
@@ -876,14 +984,23 @@ function JarvisApp() {
       : homeMode === "chat"
         ? chatError?.message ?? authError
         : authError;
-  const displayOrbState: OrbState = isLoading
-    ? "processing"
-    : isSpeaking
-      ? "speaking"
-      : orbState === "processing" || orbState === "speaking"
-        ? "idle"
-        : orbState;
-  const reserveBottomSpace = !(walletPage === "home" && homeMode === "chat");
+  const displayOrbState: OrbState = voiceError
+    ? "error"
+    : isListening
+      ? "listening"
+      : isSpeaking
+        ? "speaking"
+        : isLoading || isTranscribing
+          ? "processing"
+          : "idle";
+  const latestAssistantMessage = [...messages]
+    .reverse()
+    .find((message) => message.role === "assistant") ?? null;
+  const latestAssistantText = latestAssistantMessage
+    ? extractMessageText(latestAssistantMessage)
+    : "";
+  const showWalletNavbar = !(walletPage === "home" && (homeMode === "voice" || homeMode === "chat"));
+  const reserveBottomSpace = showWalletNavbar;
   const activeSwapTokens = swapTokens.length > 0 ? swapTokens : FALLBACK_SWAP_TOKENS;
   const selectedSwapFrom = activeSwapTokens.find((token) => token.symbol === swapFromSymbol) ?? null;
   const selectedSwapTo = activeSwapTokens.find((token) => token.symbol === swapToSymbol) ?? null;
@@ -896,63 +1013,107 @@ function JarvisApp() {
   const estimatedTsTon = stakeAmountIsValid ? numericStakeAmount : 0;
 
   useEffect(() => {
-    if (!isListening && transcript.trim()) {
-      sendMessage({ text: transcript });
-      resetTranscript();
+    if (speakingWasActiveRef.current && !isSpeaking) {
+      lastSpeakingEndedAtRef.current = Date.now();
     }
-  }, [isListening, resetTranscript, sendMessage, transcript]);
+    speakingWasActiveRef.current = isSpeaking;
+  }, [isSpeaking]);
 
   useEffect(() => {
-    if (isListening || orbState !== "listening" || Boolean(transcript)) {
+    const voiceInput = transcript.trim();
+    if (isListening || !voiceInput) {
+      return;
+    }
+
+    if (homeMode === "voice") {
+      if (isLoading || isSpeaking || isTranscribing) {
+        resetTranscript();
+        return;
+      }
+
+      const msSinceSpeechEnd = Date.now() - lastSpeakingEndedAtRef.current;
+      if (msSinceSpeechEnd >= 0 && msSinceSpeechEnd <= VOICE_POST_SPEECH_COOLDOWN_MS) {
+        resetTranscript();
+        return;
+      }
+
+      if (
+        msSinceSpeechEnd >= 0
+        && msSinceSpeechEnd <= VOICE_ECHO_GUARD_WINDOW_MS
+        && isLikelySpeechEcho(voiceInput, lastSpokenAssistantTextRef.current)
+      ) {
+        resetTranscript();
+        return;
+      }
+    }
+
+    const messageText = homeMode === "voice"
+      ? `Voice command: ${voiceInput}`
+      : voiceInput;
+    sendMessage({ text: messageText });
+    resetTranscript();
+  }, [
+    homeMode,
+    isListening,
+    isLoading,
+    isSpeaking,
+    isTranscribing,
+    resetTranscript,
+    sendMessage,
+    transcript,
+  ]);
+
+  useEffect(() => {
+    if (walletPage !== "home" || homeMode !== "voice" || !voiceAutoResumeEnabled) {
+      return;
+    }
+    if (isListening || isLoading || isTranscribing || isSpeaking || Boolean(voiceError)) {
       return;
     }
 
     const timeoutId = window.setTimeout(() => {
-      setOrbState("idle");
-    }, 0);
+      void (async () => {
+        const didStart = await startListening();
+        if (!didStart) {
+          setVoiceAutoResumeEnabled(false);
+        }
+      })();
+    }, VOICE_AUTO_RESUME_DELAY_MS);
 
     return () => window.clearTimeout(timeoutId);
-  }, [isListening, orbState, transcript]);
-
-  useEffect(() => {
-    if (!voiceError) {
-      return;
-    }
-
-    const enterErrorTimeoutId = window.setTimeout(() => {
-      setOrbState("error");
-    }, 0);
-    const timeoutId = window.setTimeout(() => {
-      setOrbState("idle");
-    }, 1800);
-
-    return () => {
-      window.clearTimeout(enterErrorTimeoutId);
-      window.clearTimeout(timeoutId);
-    };
-  }, [voiceError]);
+  }, [
+    homeMode,
+    isListening,
+    isLoading,
+    isSpeaking,
+    isTranscribing,
+    startListening,
+    voiceAutoResumeEnabled,
+    voiceError,
+    walletPage,
+  ]);
 
   const handleOrbPress = useCallback(() => {
-    if (isListening || orbState === "listening") {
-      stopListening();
-      setOrbState("idle");
+    if (isListening) {
+      setVoiceAutoResumeEnabled(false);
+      stopListening({ discard: true });
       return;
     }
 
     if (isSpeaking) {
       stopSpeaking();
-      setOrbState("idle");
+    }
+
+    if (isLoading || isTranscribing) {
       return;
     }
 
-    if (isLoading) {
-      return;
-    }
-
+    setVoiceAutoResumeEnabled(true);
     stopSpeaking();
-    startListening();
-    setOrbState("listening");
-  }, [isListening, isLoading, isSpeaking, orbState, startListening, stopListening, stopSpeaking]);
+    void (async () => {
+      await startListening();
+    })();
+  }, [isListening, isLoading, isSpeaking, isTranscribing, startListening, stopListening, stopSpeaking]);
 
   const handleQuickPrompt = useCallback(
     (prompt: string) => {
@@ -968,6 +1129,116 @@ function JarvisApp() {
     [isLoading, resetTranscript, sendMessage, stopSpeaking],
   );
 
+  const handleSeedPhraseToggle = useCallback(() => {
+    void (async () => {
+      if (seedPhraseVisible) {
+        setSeedPhraseVisible(false);
+        return;
+      }
+
+      if (seedPhraseWords && seedPhraseWords.length > 0) {
+        setSeedPhraseError(null);
+        setSeedPhraseVisible(true);
+        return;
+      }
+
+      setSeedPhraseLoading(true);
+      setSeedPhraseError(null);
+
+      try {
+        const wallet = await loadWalletFromSecureStorage();
+        if (!wallet?.mnemonic || wallet.mnemonic.length === 0) {
+          throw new Error("Seed phrase is unavailable on this device.");
+        }
+
+        setSeedPhraseWords(wallet.mnemonic);
+        setSeedPhraseVisible(true);
+      } catch (error) {
+        setSeedPhraseError(
+          error instanceof Error
+            ? error.message
+            : "Could not load the seed phrase right now.",
+        );
+      } finally {
+        setSeedPhraseLoading(false);
+      }
+    })();
+  }, [seedPhraseVisible, seedPhraseWords]);
+
+  const handleImportWalletToggle = useCallback(() => {
+    setImportWalletError(null);
+    setImportWalletSuccess(null);
+    setImportWalletOpen((current) => {
+      if (current) {
+        setImportMnemonicInput("");
+      }
+      return !current;
+    });
+  }, []);
+
+  const handleImportWalletSubmit = useCallback(() => {
+    void (async () => {
+      if (importWalletLoading) {
+        return;
+      }
+
+      const mnemonicWords = (importMnemonicInput.toLowerCase().match(/[a-z]+/g) ?? [])
+        .map((word) => word.trim())
+        .filter((word) => word.length > 0);
+
+      if (mnemonicWords.length < 12) {
+        setImportWalletError("Enter a valid 12-24 word recovery phrase.");
+        return;
+      }
+
+      setImportWalletLoading(true);
+      setImportWalletError(null);
+      setImportWalletSuccess(null);
+
+      try {
+        const wallet = await restoreWalletFromMnemonic(mnemonicWords);
+        const stored = await withTimeout(
+          storeWalletInSecureStorage(wallet.mnemonic, wallet.address),
+          false,
+          WALLET_STORAGE_TIMEOUT_MS,
+          "[Wallet] Storage write timed out during wallet import.",
+        );
+
+        if (!stored) {
+          throw new Error("Failed to securely store the imported wallet on this device.");
+        }
+
+        setWalletAddress(wallet.address);
+        setWalletBalance(null);
+        setWalletSummary(null);
+        setNewMnemonic(null);
+        setSeedPhraseWords(null);
+        setSeedPhraseVisible(false);
+        setSeedPhraseError(null);
+        setImportMnemonicInput("");
+        setImportWalletOpen(false);
+        setImportWalletSuccess("Wallet imported successfully.");
+        void syncWalletToFirestore(wallet.address);
+      } catch (error) {
+        setImportWalletError(
+          error instanceof Error ? error.message : "Could not import wallet right now.",
+        );
+      } finally {
+        setImportWalletLoading(false);
+      }
+    })();
+  }, [importMnemonicInput, importWalletLoading, syncWalletToFirestore]);
+
+  const handleFloatingMicPress = useCallback(() => {
+    if (walletPage !== "home") {
+      setWalletPage("home");
+    }
+    if (homeMode !== "voice") {
+      setHomeMode("voice");
+    }
+    handleOrbPress();
+  }, [handleOrbPress, homeMode, walletPage]);
+
   const handleWalletPageChange = useCallback((nextPage: WalletPage) => {
     setWalletPage(nextPage);
     if (nextPage === "stake") {
@@ -975,31 +1246,24 @@ function JarvisApp() {
       setStakeError(null);
     }
     if (nextPage !== "home") {
+      setVoiceAutoResumeEnabled(false);
       setHomeMode("overview");
-      stopListening();
+      stopListening({ discard: true });
       stopSpeaking();
-      setOrbState("idle");
     }
   }, [stopListening, stopSpeaking]);
 
-  const openVoiceMode = useCallback(() => {
-    stopListening();
-    stopSpeaking();
-    setOrbState("idle");
-    setHomeMode("voice");
-  }, [stopListening, stopSpeaking]);
-
   const openChatMode = useCallback(() => {
-    stopListening();
+    setVoiceAutoResumeEnabled(false);
+    stopListening({ discard: true });
     stopSpeaking();
-    setOrbState("idle");
     setHomeMode("chat");
   }, [stopListening, stopSpeaking]);
 
   const backToHomeOverview = useCallback(() => {
-    stopListening();
+    setVoiceAutoResumeEnabled(false);
+    stopListening({ discard: true });
     stopSpeaking();
-    setOrbState("idle");
     setHomeMode("overview");
   }, [stopListening, stopSpeaking]);
 
@@ -1134,6 +1398,69 @@ function JarvisApp() {
     }
   }, [selectedSwapFrom, selectedSwapTo, swapAmount]);
 
+  useEffect(() => {
+    if (walletPage !== "swap") {
+      return;
+    }
+    if (!selectedSwapFrom || !selectedSwapTo || !swapAmount.trim()) {
+      return;
+    }
+    if (selectedSwapFrom.symbol === selectedSwapTo.symbol) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void handleSwapQuote();
+    }, 380);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [handleSwapQuote, selectedSwapFrom, selectedSwapTo, swapAmount, walletPage]);
+
+  const sendTonMessages = useCallback(async (messages: SwapExecuteMessage[]) => {
+    if (!walletAddress) {
+      throw new Error("Wallet is not ready yet.");
+    }
+
+    const storedWallet = await loadWalletFromSecureStorage();
+    if (!storedWallet?.mnemonic || storedWallet.mnemonic.length === 0) {
+      throw new Error("Wallet credentials are unavailable on this device.");
+    }
+
+    const restoredWallet = await restoreWalletFromMnemonic(storedWallet.mnemonic);
+    if (restoredWallet.address !== walletAddress) {
+      throw new Error("Wallet key mismatch. Re-open the app and try again.");
+    }
+
+    const tonClient = new TonClient({
+      endpoint: TONCENTER_RPC_ENDPOINT,
+    });
+    const wallet = WalletContractV4.create({
+      workchain: 0,
+      publicKey: restoredWallet.keyPair.publicKey,
+    });
+    const openedWallet = tonClient.open(wallet);
+    const seqno = await openedWallet.getSeqno();
+
+    const transferMessages = messages.map((message) => {
+      const body = parseCellFromHex(message.payload);
+      const stateInitCell = parseCellFromHex(message.jettonWalletStateInit);
+
+      return internal({
+        to: message.targetAddress,
+        value: BigInt(message.sendAmount),
+        body,
+        init: stateInitCell ? loadStateInit(stateInitCell.beginParse()) : undefined,
+      });
+    });
+
+    await openedWallet.sendTransfer({
+      seqno,
+      secretKey: restoredWallet.keyPair.secretKey,
+      sendMode: SendMode.PAY_GAS_SEPARATELY,
+      messages: transferMessages,
+    });
+  }, [walletAddress]);
+
   const handleSwapExecution = useCallback(async () => {
     if (!walletAddress) {
       setSwapError("Wallet is not ready yet.");
@@ -1150,16 +1477,6 @@ function JarvisApp() {
     setSwapSuccess(null);
 
     try {
-      const storedWallet = await loadWalletFromSecureStorage();
-      if (!storedWallet?.mnemonic || storedWallet.mnemonic.length === 0) {
-        throw new Error("Wallet credentials are unavailable on this device.");
-      }
-
-      const restoredWallet = await restoreWalletFromMnemonic(storedWallet.mnemonic);
-      if (restoredWallet.address !== walletAddress) {
-        throw new Error("Wallet key mismatch. Re-open the app and try again.");
-      }
-
       const executionResponse = await fetch("/api/swap/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1172,15 +1489,7 @@ function JarvisApp() {
 
       const executionPayload = (await executionResponse.json()) as unknown;
       if (!executionResponse.ok) {
-        const message = (
-          typeof executionPayload === "object"
-          && executionPayload !== null
-          && "error" in executionPayload
-          && typeof (executionPayload as { error?: unknown }).error === "string"
-        )
-          ? (executionPayload as { error: string }).error
-          : "Failed to prepare swap execution.";
-        throw new Error(message);
+        throw new Error(readApiError(executionPayload, "Failed to prepare swap execution."));
       }
 
       const execution = executionPayload as SwapExecuteResponse;
@@ -1188,35 +1497,7 @@ function JarvisApp() {
         throw new Error("No execution messages were returned.");
       }
 
-      const tonClient = new TonClient({
-        endpoint: TONCENTER_RPC_ENDPOINT,
-      });
-      const wallet = WalletContractV4.create({
-        workchain: 0,
-        publicKey: restoredWallet.keyPair.publicKey,
-      });
-      const openedWallet = tonClient.open(wallet);
-      const seqno = await openedWallet.getSeqno();
-
-      const transferMessages = execution.messages.map((message) => {
-        const body = parseCellFromHex(message.payload);
-        const stateInitCell = parseCellFromHex(message.jettonWalletStateInit);
-
-        return internal({
-          to: message.targetAddress,
-          value: BigInt(message.sendAmount),
-          body,
-          init: stateInitCell ? loadStateInit(stateInitCell.beginParse()) : undefined,
-        });
-      });
-
-      await openedWallet.sendTransfer({
-        seqno,
-        secretKey: restoredWallet.keyPair.secretKey,
-        sendMode: SendMode.PAY_GAS_SEPARATELY,
-        messages: transferMessages,
-      });
-
+      await sendTonMessages(execution.messages);
       setSwapSuccess("Swap submitted on-chain. Track your balance for settlement.");
     } catch (error) {
       setSwapError(
@@ -1225,7 +1506,7 @@ function JarvisApp() {
     } finally {
       setSwapExecuting(false);
     }
-  }, [swapQuote, walletAddress]);
+  }, [sendTonMessages, swapQuote, walletAddress]);
 
   const flipSwapPair = useCallback(() => {
     setSwapFromSymbol((currentFrom) => {
@@ -1261,6 +1542,18 @@ function JarvisApp() {
   return (
     <div className={cn(APP_SHELL_CLASS, "gap-3")}>
       {walletPage === "home" && homeMode === "overview" && (
+        <div className="relative z-10 flex justify-center pt-8 pb-3">
+          <Image
+            src="/jarvis-logo.svg"
+            alt="Jarvis"
+            width={176}
+            height={54}
+            className="h-[54px] w-auto opacity-95"
+            priority
+          />
+        </div>
+      )}
+      {walletPage === "home" && homeMode === "overview" && (
         <p className="relative z-10 m-0 text-[clamp(1.2rem,5vw,1.8rem)] leading-[1.2] font-semibold tracking-[-0.02em] text-zinc-100">
           Welcome back, {firstName}. What would you want me to do today?
         </p>
@@ -1293,6 +1586,91 @@ function JarvisApp() {
             isLoading={Boolean(walletAddress) && walletSummary === null}
           />
 
+          <div className="relative z-10 rounded-[14px] border border-white/10 bg-zinc-950/85 px-3 py-2.5 text-[0.8rem] leading-[1.4] text-zinc-300">
+            <p className="font-medium text-zinc-100">Recovery phrase</p>
+            <p className="mt-1 text-zinc-400">
+              Never share this phrase with anyone. Anyone with it can control your wallet.
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 rounded-lg border-white/12 bg-zinc-900/80 px-2.5 text-[0.72rem] text-zinc-100 hover:bg-zinc-800/80 hover:text-zinc-50"
+                onClick={handleSeedPhraseToggle}
+                disabled={seedPhraseLoading}
+              >
+                {seedPhraseLoading
+                  ? "Loading..."
+                  : seedPhraseVisible
+                    ? "Hide seed phrase"
+                    : "View seed phrase"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 rounded-lg border-white/12 bg-zinc-900/80 px-2.5 text-[0.72rem] text-zinc-100 hover:bg-zinc-800/80 hover:text-zinc-50"
+                onClick={handleImportWalletToggle}
+              >
+                {importWalletOpen ? "Cancel import" : "Import wallet"}
+              </Button>
+            </div>
+
+            {seedPhraseError && (
+              <p className="mt-2 text-[0.74rem] text-rose-200">
+                {seedPhraseError}
+              </p>
+            )}
+
+            {importWalletSuccess && (
+              <p className="mt-2 text-[0.74rem] text-emerald-200">
+                {importWalletSuccess}
+              </p>
+            )}
+
+            {importWalletOpen && (
+              <div className="mt-2 rounded-xl border border-white/10 bg-zinc-900/70 p-2.5">
+                <p className="text-[0.72rem] text-zinc-400">
+                  Paste your recovery phrase (12-24 words).
+                </p>
+                <textarea
+                  className="mt-2 min-h-20 w-full resize-none rounded-lg border border-white/12 bg-zinc-950/80 p-2 text-[0.78rem] text-zinc-100 outline-none placeholder:text-zinc-500"
+                  placeholder="word1 word2 word3 ..."
+                  value={importMnemonicInput}
+                  onChange={(event) => setImportMnemonicInput(event.target.value)}
+                />
+                <Button
+                  type="button"
+                  className="mt-2 h-9 w-full rounded-lg bg-white text-zinc-900 hover:bg-zinc-100"
+                  disabled={importWalletLoading || importMnemonicInput.trim().length === 0}
+                  onClick={handleImportWalletSubmit}
+                >
+                  {importWalletLoading ? "Importing..." : "Import wallet"}
+                </Button>
+                {importWalletError && (
+                  <p className="mt-2 text-[0.74rem] text-rose-200">
+                    {importWalletError}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {seedPhraseVisible && seedPhraseWords && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {seedPhraseWords.map((word, index) => (
+                  <Badge
+                    key={`${word}-${index + 1}`}
+                    variant="secondary"
+                    className="border border-white/15 bg-white/5 font-mono text-[0.7rem] text-zinc-200"
+                  >
+                    {index + 1}. {word}
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </div>
+
           {inlineNotice && (
             <div className="relative z-10 rounded-[14px] border border-white/10 bg-zinc-950/85 px-3 py-2.5 text-[0.8rem] leading-[1.4] text-zinc-300">
               {inlineNotice}
@@ -1302,26 +1680,30 @@ function JarvisApp() {
       )}
 
       {walletPage === "home" && homeMode === "overview" && (
-        <div className="relative z-10 mt-1 grid grid-cols-2 gap-2.5">
+        <div className="relative z-10 mt-1">
           <Button
             type="button"
             variant="outline"
-            className="h-12 rounded-xl border-white/10 bg-zinc-950/84 text-zinc-200 hover:border-white/20 hover:bg-zinc-900/80 hover:text-zinc-50"
-            onClick={openVoiceMode}
-          >
-            <Mic className="mr-2 size-4" />
-            Voice
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-12 rounded-xl border-white/10 bg-zinc-950/84 text-zinc-200 hover:border-white/20 hover:bg-zinc-900/80 hover:text-zinc-50"
+            className="h-12 w-full rounded-xl border-white/10 bg-zinc-950/84 text-zinc-200 hover:border-white/20 hover:bg-zinc-900/80 hover:text-zinc-50"
             onClick={openChatMode}
           >
             <MessageCircle className="mr-2 size-4" />
-            Chat
+            Chat with Jarvis
           </Button>
         </div>
+      )}
+      {walletPage === "home" && homeMode === "overview" && (
+        <footer className="relative z-10 mt-2 text-center text-[0.72rem] text-zinc-500">
+          Built by the{" "}
+          <a
+            href="https://t.me/quantumclubinc"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-zinc-300 underline underline-offset-2 hover:text-zinc-100"
+          >
+            QC Team
+          </a>
+        </footer>
       )}
 
       {walletPage === "home" ? (
@@ -1355,59 +1737,67 @@ function JarvisApp() {
             <div className="mt-3 flex min-h-0 flex-1 items-center justify-center">
               <VoiceOrb
                 state={displayOrbState}
-                onPress={handleOrbPress}
+                voiceLevel={voiceLevel}
                 transcript={transcript}
                 spokenWords={spokenWords}
                 currentWordIndex={currentWordIndex}
               />
             </div>
-          </section>
-        ) : homeMode === "chat" ? (
-          <section className="relative z-10 flex min-h-0 flex-1 flex-col gap-3">
-            {inlineNotice && (
-              <div className="rounded-[14px] border border-white/10 bg-zinc-950/85 px-3 py-2.5 text-[0.8rem] leading-[1.4] text-zinc-300">
-                {inlineNotice}
+
+            {latestAssistantText && (
+              <div className="rounded-[18px] border border-white/10 bg-zinc-950/84 px-3 py-2.5">
+                <p className="text-[0.74rem] text-zinc-400">Jarvis response</p>
+                <p className="mt-1 text-sm leading-[1.55] text-zinc-200">
+                  {latestAssistantText}
+                </p>
               </div>
             )}
+          </section>
+        ) : homeMode === "chat" ? (
+          <section className="fixed inset-0 z-40 flex items-center justify-center">
+            <div className="relative flex h-[var(--tg-viewport-height)] min-h-dvh w-full max-w-[480px] flex-col overflow-hidden px-[max(16px,calc(var(--tg-content-safe-area-inset-left)+16px))] pt-[calc(var(--tg-content-safe-area-inset-top)+14px)] pb-[max(20px,calc(var(--tg-content-safe-area-inset-bottom)+20px))] pr-[max(16px,calc(var(--tg-content-safe-area-inset-right)+16px))]">
+              {inlineNotice && (
+                <div className="rounded-[14px] border border-white/10 bg-zinc-950/90 px-3 py-2 text-[0.8rem] leading-[1.4] text-zinc-300">
+                  {inlineNotice}
+                </div>
+              )}
 
-            <ChatThread messages={messages} isLoading={isLoading} />
+              <div className="mt-1 min-h-0 flex flex-1 overflow-hidden">
+                <ChatThread messages={messages} isLoading={isLoading} />
+              </div>
 
-            <form
-              className="relative z-10 mt-1 flex items-center gap-2.5 rounded-[22px] border border-white/10 bg-zinc-950/88 p-3 backdrop-blur-xl"
-              style={{
-                marginBottom: `calc(var(--tg-content-safe-area-inset-bottom) + ${
-                  FLOATING_NAV_HEIGHT + FLOATING_NAV_BOTTOM_OFFSET + 8
-                }px)`,
-              }}
-              onSubmit={handleTextSubmit}
-            >
-              <input
-                className="h-11 flex-1 rounded-2xl border-0 bg-white/5 px-3.5 text-foreground outline-none placeholder:text-zinc-500"
-                type="text"
-                placeholder="Ask Jarvis anything about your wallet..."
-                value={textInput}
-                onChange={(event) => setTextInput(event.target.value)}
-              />
-              <Button
-                size="icon"
-                className="size-[42px] rounded-full border-0 bg-zinc-200 text-zinc-900 shadow-[0_12px_30px_rgba(255,255,255,0.12)] transition-transform duration-200 active:scale-95 disabled:cursor-not-allowed disabled:opacity-45 disabled:shadow-none"
-                type="submit"
-                disabled={!textInput.trim() || isLoading}
+              <form
+                className="relative z-10 mt-2 flex shrink-0 items-center gap-2 rounded-[22px] border border-white/12 bg-zinc-950/94 p-2.5 shadow-[0_14px_40px_rgba(0,0,0,0.42)] backdrop-blur-xl"
+                onSubmit={handleTextSubmit}
               >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
+                <input
+                  className="h-11 flex-1 rounded-2xl border-0 bg-zinc-900/90 px-3.5 text-foreground outline-none placeholder:text-zinc-500"
+                  type="text"
+                  placeholder="Ask Jarvis anything about your wallet..."
+                  value={textInput}
+                  onChange={(event) => setTextInput(event.target.value)}
+                />
+                <Button
+                  size="icon"
+                  className="size-[42px] rounded-full border-0 bg-zinc-200 text-zinc-900 shadow-[0_12px_30px_rgba(255,255,255,0.12)] transition-transform duration-200 active:scale-95 disabled:cursor-not-allowed disabled:opacity-45 disabled:shadow-none"
+                  type="submit"
+                  disabled={!textInput.trim() || isLoading}
                 >
-                  <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-                </svg>
-              </Button>
-            </form>
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                  >
+                    <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                  </svg>
+                </Button>
+              </form>
+            </div>
           </section>
         ) : null
       ) : walletPage === "swap" ? (
-        <section className="relative z-10 flex min-h-0 flex-1 flex-col">
+        <section className="relative z-10 flex flex-col">
           <div>
             <p className="text-[0.72rem] font-medium tracking-[0.14em] text-cyan-200/75">Swap</p>
             <h2 className="mt-1 text-[1.28rem] leading-tight font-semibold text-zinc-100">
@@ -1416,7 +1806,23 @@ function JarvisApp() {
             <p className="mt-2 text-sm leading-[1.55] text-zinc-300">
               Select a token pair, request a live quote, then review the route before execution.
             </p>
-            <p className="mt-1 text-xs text-cyan-200/70">Powered by STON.fi</p>
+            <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-zinc-400">
+              <span>Powered by</span>
+              <a
+                href="https://ston.fi"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center transition-opacity hover:opacity-85"
+              >
+                <Image
+                  src="/stonfi.svg"
+                  alt="STON.fi"
+                  width={62}
+                  height={14}
+                  className="h-[14px] w-auto"
+                />
+              </a>
+            </p>
           </div>
 
           <div className="mt-4 grid gap-3">
@@ -1501,7 +1907,7 @@ function JarvisApp() {
 
           <Separator className="my-4 bg-white/10" />
 
-          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+          <div className="space-y-2">
             {swapError && (
               <div className="rounded-xl border border-rose-300/30 bg-rose-900/20 px-3 py-2 text-sm text-rose-200">
                 {swapError}
@@ -1604,40 +2010,63 @@ function JarvisApp() {
             </p>
             <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-zinc-400">
               <span>Powered by</span>
-              <Image
-                src="/tonstakers.svg"
-                alt="Tonstakers"
-                width={78}
-                height={14}
-                className="h-[14px] w-auto"
-              />
+              <a
+                href="https://tonstakers.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center transition-opacity hover:opacity-85"
+              >
+                <Image
+                  src="/tonstakers.svg"
+                  alt="Tonstakers"
+                  width={78}
+                  height={14}
+                  className="h-[14px] w-auto"
+                />
+              </a>
             </p>
           </div>
 
           <div className="mt-4 grid grid-cols-2 gap-2.5">
             <div className="rounded-xl border border-white/10 bg-zinc-900/60 p-3">
               <p className="text-[0.68rem] text-zinc-400">Current APY</p>
-              <p className="mt-1 text-sm font-semibold text-zinc-100">
-                {stakeLoading ? "..." : stakeOverview?.apy ?? "--"}
-              </p>
+              {stakeLoading ? (
+                <Skeleton className="mt-1 h-5 w-16 bg-zinc-800/70" />
+              ) : (
+                <p className="mt-1 text-sm font-semibold text-zinc-100">
+                  {stakeOverview?.apy ?? "--"}
+                </p>
+              )}
             </div>
             <div className="rounded-xl border border-white/10 bg-zinc-900/60 p-3">
               <p className="text-[0.68rem] text-zinc-400">TVL</p>
-              <p className="mt-1 text-sm font-semibold text-zinc-100">
-                {stakeLoading ? "..." : `${stakeOverview?.tvlTon ?? "--"} TON`}
-              </p>
+              {stakeLoading ? (
+                <Skeleton className="mt-1 h-5 w-24 bg-zinc-800/70" />
+              ) : (
+                <p className="mt-1 text-sm font-semibold text-zinc-100">
+                  {`${stakeOverview?.tvlTon ?? "--"} TON`}
+                </p>
+              )}
             </div>
             <div className="rounded-xl border border-white/10 bg-zinc-900/60 p-3">
               <p className="text-[0.68rem] text-zinc-400">Stakers</p>
-              <p className="mt-1 text-sm font-semibold text-zinc-100">
-                {stakeLoading ? "..." : stakeOverview?.stakersCount ?? "--"}
-              </p>
+              {stakeLoading ? (
+                <Skeleton className="mt-1 h-5 w-20 bg-zinc-800/70" />
+              ) : (
+                <p className="mt-1 text-sm font-semibold text-zinc-100">
+                  {stakeOverview?.stakersCount ?? "--"}
+                </p>
+              )}
             </div>
             <div className="rounded-xl border border-white/10 bg-zinc-900/60 p-3">
               <p className="text-[0.68rem] text-zinc-400">Min stake</p>
-              <p className="mt-1 text-sm font-semibold text-zinc-100">
-                {stakeLoading ? "..." : stakeOverview?.minStake ?? "--"}
-              </p>
+              {stakeLoading ? (
+                <Skeleton className="mt-1 h-5 w-16 bg-zinc-800/70" />
+              ) : (
+                <p className="mt-1 text-sm font-semibold text-zinc-100">
+                  {stakeOverview?.minStake ?? "--"}
+                </p>
+              )}
             </div>
           </div>
 
@@ -1678,12 +2107,6 @@ function JarvisApp() {
             </div>
           )}
 
-          <p className="mt-3 text-xs text-zinc-400">
-            Wallet:{" "}
-            {walletAddress
-              ? `${walletAddress.slice(0, 8)}…${walletAddress.slice(-6)}`
-              : "Wallet pending"}
-          </p>
         </section>
       )}
       {reserveBottomSpace && (
@@ -1691,12 +2114,31 @@ function JarvisApp() {
           className="shrink-0"
           style={{
             height: `calc(${
-              FLOATING_NAV_HEIGHT + FLOATING_NAV_BOTTOM_OFFSET + 8
+              FLOATING_NAV_HEIGHT + FLOATING_NAV_BOTTOM_OFFSET + 24
             }px + var(--tg-content-safe-area-inset-bottom))`,
           }}
         />
       )}
-      <WalletNavbar currentPage={walletPage} onChange={handleWalletPageChange} />
+      {showWalletNavbar && (
+        <WalletNavbar currentPage={walletPage} onChange={handleWalletPageChange} />
+      )}
+      <Button
+        type="button"
+        size="icon"
+        className="fixed right-[max(16px,calc(var(--tg-content-safe-area-inset-right)+16px))] z-50 size-12 rounded-full bg-zinc-100 text-zinc-900 shadow-[0_16px_35px_rgba(0,0,0,0.45)] hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+        style={{
+          bottom: showWalletNavbar
+            ? `calc(var(--tg-content-safe-area-inset-bottom) + ${
+              FLOATING_NAV_HEIGHT + FLOATING_NAV_BOTTOM_OFFSET + 24
+            }px)`
+            : "calc(var(--tg-content-safe-area-inset-bottom) + 24px)",
+        }}
+        onClick={handleFloatingMicPress}
+        disabled={isLoading}
+        aria-label={isListening ? "Turn microphone off" : "Turn microphone on"}
+      >
+        {isListening ? <Mic className="size-5" /> : <MicOff className="size-5" />}
+      </Button>
     </div>
   );
 }

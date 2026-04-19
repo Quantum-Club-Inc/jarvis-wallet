@@ -1,5 +1,7 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import { tool } from "ai";
 import { z } from "zod";
 
@@ -11,12 +13,150 @@ import {
   buildUnstakeTransaction,
 } from "@/lib/defi/stake";
 
+type InteractionMode = "overview" | "voice" | "chat";
+
+interface CreateAgentToolsOptions {
+  defaultWalletAddress?: string;
+  interactionMode?: InteractionMode;
+  requestOrigin?: string;
+}
+
+interface AutomationResult {
+  requestId?: string;
+  action?: string;
+  walletAddress?: string;
+  quote?: {
+    offerAmount?: string;
+    offerToken?: string;
+    askAmount?: string;
+    askToken?: string;
+  };
+  amountTon?: string;
+  submitted?: {
+    walletAddress?: string;
+    seqno?: number;
+    sentMessages?: number;
+  } | null;
+}
+
+function formatUnknownError(error: unknown): string {
+  return error instanceof Error ? error.message : "Unknown error";
+}
+
+function normalizeOrigin(rawOrigin?: string): string | null {
+  if (!rawOrigin) {
+    return null;
+  }
+
+  const value = rawOrigin.trim();
+  if (!value) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(value)) {
+    return value.replace(/\/+$/, "");
+  }
+
+  return `https://${value}`.replace(/\/+$/, "");
+}
+
+function resolveAutomationEndpoint(requestOrigin?: string): string | null {
+  const configuredN8nWebhook = process.env.N8N_AGENT_WEBHOOK_URL?.trim();
+  if (configuredN8nWebhook) {
+    return configuredN8nWebhook;
+  }
+
+  const fallbackOrigin = normalizeOrigin(requestOrigin)
+    ?? normalizeOrigin(process.env.APP_BASE_URL)
+    ?? normalizeOrigin(process.env.NEXT_PUBLIC_APP_URL)
+    ?? normalizeOrigin(process.env.VERCEL_URL);
+
+  if (!fallbackOrigin) {
+    return null;
+  }
+
+  return `${fallbackOrigin}/api/automation/n8n`;
+}
+
+async function parseJsonSafe(response: Response): Promise<unknown> {
+  try {
+    return (await response.json()) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+async function runN8nAutomation(
+  action: "swap" | "stake",
+  payload: Record<string, unknown>,
+  requestOrigin?: string,
+): Promise<AutomationResult> {
+  const endpoint = resolveAutomationEndpoint(requestOrigin);
+  if (!endpoint) {
+    throw new Error(
+      "Automation endpoint is not configured. Set N8N_AGENT_WEBHOOK_URL or APP_BASE_URL.",
+    );
+  }
+
+  const secret = process.env.N8N_WEBHOOK_SECRET?.trim();
+  if (!secret) {
+    throw new Error("N8N_WEBHOOK_SECRET is required for automation execution.");
+  }
+
+  const requestId = `jarvis-${action}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-jarvis-n8n-secret": secret,
+    },
+    body: JSON.stringify({
+      requestId,
+      action,
+      dryRun: false,
+      ...payload,
+    }),
+    cache: "no-store",
+  });
+
+  const data = await parseJsonSafe(response);
+  if (typeof data !== "object" || data === null) {
+    throw new Error(`Automation request failed (${response.status}).`);
+  }
+
+  const payloadError = "error" in data && typeof data.error === "string"
+    ? data.error
+    : `Automation request failed (${response.status}).`;
+  if (!response.ok || ("ok" in data && data.ok !== true)) {
+    throw new Error(payloadError);
+  }
+
+  const result = "result" in data && typeof data.result === "object" && data.result !== null
+    ? (data.result as AutomationResult)
+    : null;
+
+  if (!result) {
+    throw new Error("Automation response did not include a result payload.");
+  }
+
+  return result;
+}
+
 /**
  * All DeFi tools available to the Jarvis AI agent.
  * Each tool is a function the LLM can invoke via structured tool calling.
  */
-export function createAgentTools(defaultWalletAddress?: string) {
+export function createAgentTools(options?: string | CreateAgentToolsOptions) {
+  const resolvedOptions = typeof options === "string"
+    ? { defaultWalletAddress: options }
+    : options ?? {};
+  const {
+    defaultWalletAddress,
+    interactionMode = "chat",
+    requestOrigin,
+  } = resolvedOptions;
   const resolvedDefaultWalletAddress = defaultWalletAddress?.trim() || undefined;
+  const shouldExecuteViaN8n = interactionMode === "voice";
 
   return {
     check_balance: tool({
@@ -70,7 +210,7 @@ export function createAgentTools(defaultWalletAddress?: string) {
 
     swap_tokens: tool({
     description:
-      "Simulate a token swap on STON.fi DEX. Returns estimated output, price impact, and swap rate for user confirmation. Does NOT execute the swap.",
+      "Swap tool. In voice mode executes swap through n8n automation; in chat mode returns STON.fi preview for confirmation.",
     inputSchema: z.object({
       fromToken: z
         .string()
@@ -88,27 +228,67 @@ export function createAgentTools(defaultWalletAddress?: string) {
     }),
     execute: async ({ fromToken, toToken, amount }) => {
       try {
+        const offerTokenSymbol = fromToken.trim().toUpperCase();
+        const askTokenSymbol = toToken.trim().toUpperCase();
+        const offerAmount = amount.trim();
+
+        if (shouldExecuteViaN8n) {
+          const automationResult = await runN8nAutomation(
+            "swap",
+            {
+              offerTokenSymbol,
+              askTokenSymbol,
+              offerAmount,
+            },
+            requestOrigin,
+          );
+          const quote = automationResult.quote;
+
+          return {
+            success: true,
+            status: "executed_via_n8n",
+            executionMode: "automation",
+            requestId: automationResult.requestId,
+            from: quote?.offerAmount && quote?.offerToken
+              ? `${quote.offerAmount} ${quote.offerToken}`
+              : `${offerAmount} ${offerTokenSymbol}`,
+            to: quote?.askAmount && quote?.askToken
+              ? `${quote.askAmount} ${quote.askToken}`
+              : askTokenSymbol,
+            submittedBy: "n8n",
+            automationWallet: automationResult.walletAddress
+              ?? automationResult.submitted?.walletAddress
+              ?? null,
+            seqno: automationResult.submitted?.seqno ?? null,
+            message: "Swap submitted via n8n automation.",
+          };
+        }
+
         const simulation = await simulateSwap({
-          offerTokenSymbol: fromToken,
-          askTokenSymbol: toToken,
-          offerAmount: amount,
+          offerTokenSymbol,
+          askTokenSymbol,
+          offerAmount,
         });
 
         return {
           success: true,
           from: `${simulation.offerAmount} ${simulation.offerToken.symbol}`,
           to: `${simulation.askAmount} ${simulation.askToken.symbol}`,
+          offerAmount: simulation.offerAmount,
+          offerTokenSymbol: simulation.offerToken.symbol,
+          askTokenSymbol: simulation.askToken.symbol,
           minimumReceived: `${simulation.minAskAmount} ${simulation.askToken.symbol}`,
           priceImpact: simulation.priceImpact,
           swapRate: `1 ${simulation.offerToken.symbol} = ${simulation.swapRate} ${simulation.askToken.symbol}`,
           status: "preview",
+          executionMode: "preview",
           message:
-            "This is a simulation. Ask the user to confirm before executing.",
+            "Swap preview prepared and ready for execution.",
         };
       } catch (error) {
         return {
           success: false,
-          error: `Swap simulation failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+          error: `Swap failed: ${formatUnknownError(error)}`,
         };
       }
     },
@@ -116,7 +296,7 @@ export function createAgentTools(defaultWalletAddress?: string) {
 
     stake_ton: tool({
     description:
-      "Prepare a TON staking transaction via Tonstakers. The user will receive tsTON (liquid staking token) that earns staking rewards automatically.",
+      "Stake TON tool. In voice mode executes staking through n8n automation; in chat mode prepares staking details for confirmation.",
     inputSchema: z.object({
       amount: z
         .string()
@@ -124,28 +304,58 @@ export function createAgentTools(defaultWalletAddress?: string) {
     }),
     execute: async ({ amount }) => {
       try {
+        const amountTon = amount.trim();
+
+        if (shouldExecuteViaN8n) {
+          const automationResult = await runN8nAutomation(
+            "stake",
+            { amountTon },
+            requestOrigin,
+          );
+
+          return {
+            success: true,
+            action: "stake",
+            amount: `${automationResult.amountTon ?? amountTon} TON`,
+            amountTon: automationResult.amountTon ?? amountTon,
+            willReceive: `~${automationResult.amountTon ?? amountTon} tsTON`,
+            status: "executed_via_n8n",
+            executionMode: "automation",
+            requestId: automationResult.requestId,
+            submittedBy: "n8n",
+            automationWallet: automationResult.walletAddress
+              ?? automationResult.submitted?.walletAddress
+              ?? null,
+            seqno: automationResult.submitted?.seqno ?? null,
+            message: "Stake submitted via n8n automation.",
+          };
+        }
+
         const [txParams, stakingInfo] = await Promise.all([
-          Promise.resolve(buildStakeTransaction(amount)),
+          Promise.resolve(buildStakeTransaction(amountTon)),
           getStakingInfo(),
         ]);
 
         return {
           success: true,
           action: "stake",
-          amount: `${amount} TON`,
-          willReceive: "~" + amount + " tsTON",
+          amount: `${amountTon} TON`,
+          amountTon: txParams.amount,
+          poolAddress: txParams.poolAddress,
+          willReceive: "~" + amountTon + " tsTON",
           currentApy: stakingInfo.apy,
           poolTvl: stakingInfo.tvlTon + " TON",
           minStake: stakingInfo.minStake,
           description: txParams.description,
           status: "ready_to_execute",
+          executionMode: "preview",
           message:
-            "Transaction prepared. Ask the user to confirm before sending.",
+            "Transaction prepared and ready to execute.",
         };
       } catch (error) {
         return {
           success: false,
-          error: `Staking preparation failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+          error: `Staking failed: ${formatUnknownError(error)}`,
         };
       }
     },

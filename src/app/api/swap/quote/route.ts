@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   Blockchain,
+  GaslessSettlement,
   Omniston,
   QuoteResponseEventType,
   SettlementMethod,
@@ -20,10 +21,11 @@ import {
 
 export const runtime = "nodejs";
 
-const QUOTE_TIMEOUT_MS = 9000;
-const BEST_QUOTE_WINDOW_MS = 1200;
-const QUOTE_RETRY_ATTEMPTS = 3;
-const QUOTE_RETRY_DELAY_MS = 350;
+const QUOTE_TIMEOUT_MS = 7_000;
+const BEST_QUOTE_WINDOW_MS = 500;
+const NO_QUOTE_GRACE_MS = 350;
+const QUOTE_RETRY_ATTEMPTS = 2;
+const QUOTE_RETRY_DELAY_MS = 200;
 const DEFAULT_OMNISTON_API_URL = "wss://omni-ws.ston.fi";
 
 interface SwapQuoteRequestBody {
@@ -79,6 +81,7 @@ async function requestBestQuote(params: {
     let settled = false;
     let subscription: { unsubscribe: () => void } | null = null;
     let settleTimerId: ReturnType<typeof setTimeout> | null = null;
+    let noQuoteTimerId: ReturnType<typeof setTimeout> | null = null;
     let bestQuoteEvent: QuoteResponseEvent_QuoteUpdated | null = null;
 
     const pickBestQuote = (
@@ -108,10 +111,13 @@ async function requestBestQuote(params: {
     };
 
     const scheduleBestQuoteResolution = () => {
-      if (settleTimerId) {
-        return;
+      if (noQuoteTimerId) {
+        clearTimeout(noQuoteTimerId);
+        noQuoteTimerId = null;
       }
-
+      if (settleTimerId) {
+        clearTimeout(settleTimerId);
+      }
       settleTimerId = setTimeout(() => {
         if (settled) {
           return;
@@ -126,6 +132,22 @@ async function requestBestQuote(params: {
       }, BEST_QUOTE_WINDOW_MS);
     };
 
+    const scheduleNoQuoteResolution = () => {
+      if (noQuoteTimerId) {
+        clearTimeout(noQuoteTimerId);
+      }
+      noQuoteTimerId = setTimeout(() => {
+        if (settled) {
+          return;
+        }
+        if (resolveBestQuote()) {
+          return;
+        }
+        finalize();
+        reject(new Error("No swap quote available for this pair right now."));
+      }, NO_QUOTE_GRACE_MS);
+    };
+
     const finalize = () => {
       if (!settled) {
         settled = true;
@@ -134,6 +156,10 @@ async function requestBestQuote(params: {
       if (settleTimerId) {
         clearTimeout(settleTimerId);
         settleTimerId = null;
+      }
+      if (noQuoteTimerId) {
+        clearTimeout(noQuoteTimerId);
+        noQuoteTimerId = null;
       }
       clearTimeout(timeoutId);
       omniston.close();
@@ -151,12 +177,17 @@ async function requestBestQuote(params: {
     }, QUOTE_TIMEOUT_MS);
 
     try {
-      const quoteStream = omniston.requestForQuote({
-        bidAssetAddress: toOmniAddress(params.bidAddress),
-        askAssetAddress: toOmniAddress(params.askAddress),
-        amount: { bidUnits: params.bidUnits },
-        settlementMethods: [SettlementMethod.SETTLEMENT_METHOD_SWAP],
-      });
+        const quoteStream = omniston.requestForQuote({
+          bidAssetAddress: toOmniAddress(params.bidAddress),
+          askAssetAddress: toOmniAddress(params.askAddress),
+          amount: { bidUnits: params.bidUnits },
+          settlementMethods: [SettlementMethod.SETTLEMENT_METHOD_SWAP],
+          settlementParams: {
+            maxPriceSlippageBps: 0,
+            maxOutgoingMessages: 4,
+            gaslessSettlement: GaslessSettlement.GASLESS_SETTLEMENT_POSSIBLE,
+          },
+        });
 
       subscription = quoteStream.subscribe({
         next: (event) => {
@@ -170,12 +201,15 @@ async function requestBestQuote(params: {
             return;
           }
 
+          if (event.type === QuoteResponseEventType.Ack) {
+            return;
+          }
+
           if (event.type === QuoteResponseEventType.NoQuote) {
             if (resolveBestQuote()) {
               return;
             }
-            finalize();
-            reject(new Error("No swap quote available for this pair right now."));
+            scheduleNoQuoteResolution();
             return;
           }
 
@@ -184,7 +218,7 @@ async function requestBestQuote(params: {
               return;
             }
             finalize();
-            reject(new Error("Quote stream ended before a quote was returned."));
+            reject(new Error("No swap quote available for this pair right now."));
           }
         },
         error: (error) => {

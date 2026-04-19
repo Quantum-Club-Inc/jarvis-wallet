@@ -20,8 +20,61 @@ export function useTTS(): UseTTSReturn {
   const timePerWordRef = useRef(0);
   const lastWordIdxRef = useRef(-1);
 
+  const resetSpeechState = useCallback(() => {
+    setIsSpeaking(false);
+    setWords([]);
+    setCurrentWordIndex(-1);
+  }, []);
+
+  const speakWithBrowser = useCallback((text: string, wordList: string[]) => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      resetSpeechState();
+      return;
+    }
+
+    const synth = window.speechSynthesis;
+    synth.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-US";
+    utterance.rate = 1;
+    utterance.pitch = 1;
+
+    utterance.onstart = () => {
+      setIsSpeaking(true);
+      setWords(wordList);
+      setCurrentWordIndex(-1);
+    };
+
+    utterance.onboundary = (event: SpeechSynthesisEvent) => {
+      if (!Number.isFinite(event.charIndex) || event.charIndex < 0) {
+        return;
+      }
+      const spokenPrefix = text.slice(0, event.charIndex).trim();
+      const idx = spokenPrefix ? spokenPrefix.split(/\s+/).length - 1 : 0;
+      if (idx !== lastWordIdxRef.current) {
+        lastWordIdxRef.current = idx;
+        setCurrentWordIndex(Math.min(idx, wordList.length - 1));
+      }
+    };
+
+    utterance.onend = () => {
+      resetSpeechState();
+    };
+
+    utterance.onerror = () => {
+      resetSpeechState();
+    };
+
+    synth.speak(utterance);
+  }, [resetSpeechState]);
+
   const speak = useCallback((text: string) => {
     if (typeof window === "undefined") return;
+    const normalizedText = text.trim();
+    if (!normalizedText) {
+      return;
+    }
 
     if (audioRef.current) {
       audioRef.current.pause();
@@ -31,8 +84,11 @@ export function useTTS(): UseTTSReturn {
       URL.revokeObjectURL(objectUrlRef.current);
       objectUrlRef.current = null;
     }
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
 
-    const wordList = text.trim().split(/\s+/).filter(Boolean);
+    const wordList = normalizedText.split(/\s+/).filter(Boolean);
     setWords(wordList);
     setCurrentWordIndex(-1);
     lastWordIdxRef.current = -1;
@@ -41,7 +97,7 @@ export function useTTS(): UseTTSReturn {
     fetch("/api/voice/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text: normalizedText }),
     })
       .then((res) => {
         if (!res.ok)
@@ -99,21 +155,19 @@ export function useTTS(): UseTTSReturn {
 
         audio.play().catch((err: unknown) => {
           console.error("[TTS] audio.play() rejected:", err);
-          setIsSpeaking(false);
-          setWords([]);
-          setCurrentWordIndex(-1);
+          resetSpeechState();
           URL.revokeObjectURL(url);
           objectUrlRef.current = null;
           audioRef.current = null;
+          speakWithBrowser(normalizedText, wordList);
         });
       })
       .catch((err: unknown) => {
         console.error("[TTS] Fetch or blob error:", err);
-        setIsSpeaking(false);
-        setWords([]);
-        setCurrentWordIndex(-1);
+        resetSpeechState();
+        speakWithBrowser(normalizedText, wordList);
       });
-  }, []);
+  }, [resetSpeechState, speakWithBrowser]);
 
   const stop = useCallback(() => {
     if (audioRef.current) {
@@ -124,10 +178,11 @@ export function useTTS(): UseTTSReturn {
       URL.revokeObjectURL(objectUrlRef.current);
       objectUrlRef.current = null;
     }
-    setIsSpeaking(false);
-    setWords([]);
-    setCurrentWordIndex(-1);
-  }, []);
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+    resetSpeechState();
+  }, [resetSpeechState]);
 
   return { speak, stop, isSpeaking, words, currentWordIndex };
 }

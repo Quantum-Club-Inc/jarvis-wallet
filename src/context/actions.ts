@@ -1,6 +1,6 @@
 "use server";
 
-import { auth } from "@/lib/firebase/server";
+import { getAdminAuth } from "@/lib/firebase/admin";
 import { cookies } from "next/headers";
 
 export const removeToken = async () => {
@@ -17,22 +17,23 @@ export const setToken = async ({
   refreshToken: string;
 }) => {
   try {
+    const auth = getAdminAuth();
     const verifiedToken = await auth.verifyIdToken(token);
     if (!verifiedToken) {
       return;
     }
 
     const userRecord = await auth.getUser(verifiedToken.uid);
-    if (process.env.ADMIN_EMAIL === userRecord.email && (!userRecord.customClaims?.admin)) {
-      auth.setCustomUserClaims(verifiedToken.uid, {
+    if (process.env.ADMIN_EMAIL === userRecord.email && !userRecord.customClaims?.admin) {
+      await auth.setCustomUserClaims(verifiedToken.uid, {
         admin: true,
       });
-    }else{
-      if(!userRecord.customClaims?.user){
-        auth.setCustomUserClaims(verifiedToken.uid, {
-        user: true,
-      });
-      }  
+    } else {
+      if (!userRecord.customClaims?.user) {
+        await auth.setCustomUserClaims(verifiedToken.uid, {
+          user: true,
+        });
+      }
     }
 
     const cookieStore = await cookies();

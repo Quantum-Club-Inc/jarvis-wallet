@@ -134,7 +134,7 @@ function AssetLogo({ symbol, imageUrl }: { symbol: string; imageUrl: string | nu
 
   if (imageUrl && !imageFailed) {
     return (
-      <div className="flex size-8 items-center justify-center overflow-hidden rounded-full ring-1 ring-white/15">
+      <div className="flex size-8 items-center justify-center overflow-hidden rounded-full">
         <img
           src={imageUrl}
           alt={`${normalized} logo`}
@@ -148,7 +148,7 @@ function AssetLogo({ symbol, imageUrl }: { symbol: string; imageUrl: string | nu
 
   if (normalized === "TON") {
     return (
-      <div className="flex size-8 items-center justify-center rounded-full ring-1 ring-white/15">
+      <div className="flex size-8 items-center justify-center rounded-full">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path
             fill="#fff"

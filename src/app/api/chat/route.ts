@@ -16,11 +16,30 @@ export async function POST(req: Request): Promise<Response> {
     const body = (await req.json()) as {
       messages: UIMessage[];
       walletAddress?: string;
+      walletContext?: {
+        totalUsd: string | null;
+        totalTon: string | null;
+        assets: Array<{
+          symbol: string;
+          amount: string;
+          valueUsd: string | null;
+        }>;
+      } | null;
+      n8nAutomationEnabled?: boolean;
       isFirstTime?: boolean;
       newMnemonic?: string;
+      interactionMode?: "overview" | "voice" | "chat";
     };
 
-    const { messages, walletAddress, isFirstTime, newMnemonic } = body;
+    const {
+      messages,
+      walletAddress,
+      walletContext,
+      n8nAutomationEnabled,
+      isFirstTime,
+      newMnemonic,
+      interactionMode,
+    } = body;
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return new Response(
@@ -29,7 +48,12 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
 
-    let systemPrompt = buildSystemPrompt(walletAddress ?? undefined);
+    let systemPrompt = buildSystemPrompt(
+      walletAddress ?? undefined,
+      interactionMode,
+      walletContext ?? null,
+      Boolean(n8nAutomationEnabled),
+    );
     
     if (isFirstTime && newMnemonic) {
       systemPrompt += `\n\nCRITICAL DIRECTIVE: The user has just created a new wallet. Their 24-word recovery phrase is: "${newMnemonic}". You must ask the user to read back all 24 words using their voice to verify they have saved it. DO NOT let them perform any wallet actions until they have successfully repeated the phrase back to you.`;
@@ -39,7 +63,12 @@ export async function POST(req: Request): Promise<Response> {
       model: getAgentModel(),
       system: systemPrompt,
       messages: await convertToModelMessages(messages),
-      tools: createAgentTools(walletAddress),
+      maxOutputTokens: 220,
+      tools: createAgentTools({
+        defaultWalletAddress: walletAddress,
+        interactionMode,
+        requestOrigin: new URL(req.url).origin,
+      }),
       stopWhen: stepCountIs(5),
       providerOptions: agentProviderOptions,
       onStepFinish: ({ toolResults }) => {

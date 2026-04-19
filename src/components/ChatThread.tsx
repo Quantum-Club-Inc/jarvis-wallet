@@ -33,8 +33,8 @@ export function ChatThread({ messages, isLoading }: ChatThreadProps) {
 
   if (messages.length === 0 && !isLoading) {
     return (
-      <div className="relative z-10 grid flex-1 place-items-center px-3 pb-[calc(84px+var(--tg-content-safe-area-inset-bottom))]">
-        <p className="m-0 max-w-80 text-center leading-7 text-zinc-300">
+      <div className="relative z-10 flex h-full min-h-0 items-center justify-center px-3">
+        <p className="m-0 max-w-80 text-center text-sm leading-7 text-zinc-300">
           Say something like &ldquo;What&rsquo;s my balance?&rdquo; or
           &ldquo;Swap 5 TON to USDT&rdquo;
         </p>
@@ -44,14 +44,14 @@ export function ChatThread({ messages, isLoading }: ChatThreadProps) {
 
   return (
     <div
-      className="relative z-10 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-0.5 pt-2 pb-[calc(16px+var(--tg-content-safe-area-inset-bottom))] [scrollbar-width:thin] [scrollbar-color:rgba(255,255,255,0.14)_transparent]"
+      className="relative z-10 flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-1 pt-2 pb-[calc(16px+var(--tg-content-safe-area-inset-bottom))] [scrollbar-width:thin] [scrollbar-color:rgba(255,255,255,0.14)_transparent]"
       ref={scrollRef}
     >
       {messages.map((msg) => (
         <MessageBubble key={msg.id} message={msg} />
       ))}
       {isLoading && (
-        <div className="inline-flex w-fit items-center gap-1.5 self-start rounded-[18px] border border-white/10 bg-zinc-950/86 px-4 py-3 backdrop-blur-xl">
+        <div className="inline-flex w-fit items-center gap-1.5 self-start rounded-[18px_18px_18px_8px] border border-white/10 bg-zinc-950/92 px-4 py-3 backdrop-blur-xl">
           <div className="size-1.5 animate-bounce rounded-full bg-zinc-300 [animation-delay:0ms]" />
           <div className="size-1.5 animate-bounce rounded-full bg-zinc-300 [animation-delay:120ms]" />
           <div className="size-1.5 animate-bounce rounded-full bg-zinc-300 [animation-delay:240ms]" />
@@ -69,8 +69,8 @@ function MessageBubble({ message }: { message: UIMessage }) {
       className={cn(
         "w-fit max-w-[min(88%,520px)] animate-in fade-in slide-in-from-bottom-2 duration-200 max-sm:max-w-[92%]",
         isUser
-          ? "self-end rounded-[18px_18px_8px_18px] border border-white/15 bg-zinc-900/90 px-3.5 py-3"
-          : "self-start rounded-[18px_18px_18px_8px] border border-white/10 bg-zinc-950/86 px-3.5 py-3 backdrop-blur-xl",
+          ? "self-end rounded-[18px_18px_8px_18px] border border-emerald-200/20 bg-emerald-950/55 px-3.5 py-3"
+          : "self-start rounded-[18px_18px_18px_8px] border border-white/10 bg-zinc-950/92 px-3.5 py-3 backdrop-blur-xl",
       )}
     >
       {message.parts.map((part, i) => {
@@ -178,18 +178,30 @@ function BalanceResult({ data }: { data: Record<string, unknown> }) {
 }
 
 function SwapResult({ data }: { data: Record<string, unknown> }) {
+  const isAutomation = data.executionMode === "automation" || data.status === "executed_via_n8n";
   return (
     <div className="flex flex-col gap-1.5">
       <ResultRow label="From" value={String(data.from)} />
       <ResultRow label="To" value={String(data.to)} highlight />
-      <ResultRow label="Min. Received" value={String(data.minimumReceived)} />
-      <ResultRow label="Rate" value={String(data.swapRate)} />
-      <ResultRow label="Price Impact" value={String(data.priceImpact)} />
+      {!isAutomation && (
+        <>
+          <ResultRow label="Min. Received" value={String(data.minimumReceived)} />
+          <ResultRow label="Rate" value={String(data.swapRate)} />
+          <ResultRow label="Price Impact" value={String(data.priceImpact)} />
+        </>
+      )}
+      {isAutomation && (
+        <>
+          <ResultRow label="Mode" value="n8n automation" />
+          <ResultRow label="Seqno" value={String(data.seqno ?? "--")} />
+        </>
+      )}
     </div>
   );
 }
 
 function StakeResult({ data }: { data: Record<string, unknown> }) {
+  const isAutomation = data.executionMode === "automation" || data.status === "executed_via_n8n";
   return (
     <div className="flex flex-col gap-1.5">
       <ResultRow
@@ -201,6 +213,7 @@ function StakeResult({ data }: { data: Record<string, unknown> }) {
       {!!data.currentApy && (
         <ResultRow label="APY" value={String(data.currentApy)} />
       )}
+      {isAutomation && <ResultRow label="Mode" value="n8n automation" />}
     </div>
   );
 }
@@ -267,9 +280,9 @@ function getToolLabel(toolName: string): string {
     case "check_balance":
       return "Checking Balance";
     case "swap_tokens":
-      return "Swap Preview";
+      return "Swap";
     case "stake_ton":
-      return "Stake TON";
+      return "Stake";
     case "unstake_ton":
       return "Unstake tsTON";
     case "get_staking_info":

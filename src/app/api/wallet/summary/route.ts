@@ -134,23 +134,23 @@ export async function GET(request: NextRequest): Promise<Response> {
 
           return {
             symbol,
-            amount: `${amount.toFixed(4)} ${symbol}`,
+            amount: `${amount.toFixed(2)} ${symbol}`,
             valueUsd: valueUsd !== null ? valueUsd.toFixed(2) : null,
             imageUrl: readJettonImage(item),
           };
         })
-        .filter((asset) => asset.amount !== `0.0000 ${asset.symbol}`);
+        .filter((asset) => asset.amount !== `0.00 ${asset.symbol}`);
     }
 
     const totalUsdValue = (tonValueUsd ?? 0) + jettonTotalUsd;
 
     return NextResponse.json({
       totalUsd: totalUsdValue.toFixed(2),
-      totalTon: tonBalance.toFixed(4),
+      totalTon: tonBalance.toFixed(2),
       assets: [
         {
           symbol: "TON",
-          amount: `${tonBalance.toFixed(4)} TON`,
+          amount: `${tonBalance.toFixed(2)} TON`,
           valueUsd: tonValueUsd !== null ? tonValueUsd.toFixed(2) : null,
           imageUrl: null,
         },
@@ -160,11 +160,18 @@ export async function GET(request: NextRequest): Promise<Response> {
   } catch (error) {
     console.error("[WalletSummary] Failed to load wallet summary:", error);
     return NextResponse.json(
-      {
-        totalUsd: "0.00",
-        totalTon: "0.0000",
-        assets: [],
-      },
+        {
+          totalUsd: "0.00",
+          totalTon: "0.00",
+          assets: [
+            {
+              symbol: "TON",
+              amount: "0.00 TON",
+              valueUsd: "0.00",
+              imageUrl: null,
+            },
+          ],
+        },
       { status: 200 },
     );
   }
