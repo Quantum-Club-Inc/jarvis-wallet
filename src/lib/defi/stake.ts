@@ -1,23 +1,5 @@
 import "server-only";
-import { Address as TonAddress } from "@ton/core";
-
-/**
- * Tonstakers integration for liquid staking on TON.
- * Uses Tonstakers' public staking cache endpoint as the primary source of truth
- * for APY/rates/TVL and TonAPI pool metadata for minimum stake fallback.
- */
-
-/** Tonstakers pool contract address (mainnet) */
-export const TONSTAKERS_POOL_ADDRESS =
-  "EQCkWxfyhAkim3g2DjKQQg8T5P4g-Q1-K_jErGcDJZ4i-vqR";
-
-/** tsTON jetton address (mainnet) */
-export const TSTON_ADDRESS =
-  "EQC98_qAmNEptUtPc7W6xdHh_ZHrBUFpw5Ft_IzNU20QAJav";
-
-const TONSTAKERS_STAKING_CACHE_URL =
-  "https://api.tonstakers.com/cache/v1/blockchain/staking";
-const TON_NANO = 1_000_000_000n;
+import { Tonstakers } from "tonstakers-sdk";
 
 export interface StakingInfo {
   apy: string;
@@ -27,118 +9,86 @@ export interface StakingInfo {
   stakersCount: string;
 }
 
-interface TonstakersStakingCacheResponse {
-  status: number;
-  message: string | null;
-  data?: {
-    staking_data?: {
-      tvl: string;
-      stakers: number;
-      currentApy: number;
-      tsTONPrice: number;
-    };
-  };
+const TON_NANO = 1_000_000_000n;
+
+// SDK internal types matched structurally
+interface TransactionMessage {
+    address: string;
+    amount: string;
+    payload: string;
+}
+interface TransactionDetails {
+    validUntil: number;
+    messages: TransactionMessage[];
 }
 
-interface TonApiPoolResponse {
-  pool?: {
-    min_stake?: number | string;
-    apy?: number;
-    total_amount?: number | string;
-    current_nominators?: number;
-  };
-}
-
-function formatInteger(value: bigint): string {
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
-}
-
-function formatTonFromNano(value: bigint): string {
-  const wholeTon = value / TON_NANO;
-  return formatInteger(wholeTon);
-}
-
-function parseNano(value: string | number | null | undefined): bigint | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return BigInt(Math.trunc(value));
+/** A dummy connector for read-only Tonstakers SDK use */
+class ReadOnlyConnector {
+  async sendTransaction(): Promise<{ boc: string }> {
+    return { boc: "" };
   }
-
-  if (typeof value === "string" && value.trim()) {
-    try {
-      return BigInt(value.trim());
-    } catch {
-      return null;
-    }
+  onStatusChange(callback: (wallet: any) => void): void {
+    // no-op
   }
-
-  return null;
 }
 
-async function fetchTonstakersCache() {
-  const response = await fetch(TONSTAKERS_STAKING_CACHE_URL, {
-    cache: "no-store",
+/** InterceptConnector catches the transaction payload without sending it */
+class InterceptConnector {
+  public capturedTx: TransactionDetails | null = null;
+  async sendTransaction(tx: TransactionDetails): Promise<{ boc: string }> {
+    this.capturedTx = tx;
+    return { boc: "" };
+  }
+  onStatusChange(): void {
+    // no-op
+  }
+}
+
+export const TONSTAKERS_POOL_ADDRESS = "EQCkWxfyhAkim3g2DjKQQg8T5P4g-Q1-K_jErGcDJZ4i-vqR";
+
+function getTonstakersInstance(connector: any) {
+  return new Tonstakers({
+    connector,
+    tonApiKey: process.env.TONAPI_KEY?.trim() || undefined,
   });
-  if (!response.ok) {
-    throw new Error(`Tonstakers cache request failed with status ${response.status}.`);
-  }
-
-  const payload = (await response.json()) as TonstakersStakingCacheResponse;
-  return payload.data?.staking_data ?? null;
 }
 
-async function fetchTonApiPoolInfo() {
-  const poolAddress = TonAddress.parse(TONSTAKERS_POOL_ADDRESS).toRawString();
-  const response = await fetch(`https://tonapi.io/v2/staking/pool/${poolAddress}`, {
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    throw new Error(`TonAPI pool request failed with status ${response.status}.`);
-  }
-
-  const payload = (await response.json()) as TonApiPoolResponse;
-  return payload.pool ?? null;
+function formatTonFromNano(value: number): string {
+  const wholeTon = BigInt(Math.floor(value)) / TON_NANO;
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(wholeTon);
 }
 
 /**
- * Fetch current staking information from Tonstakers public API.
+ * Fetch current staking information from Tonstakers SDK.
  */
 export async function getStakingInfo(): Promise<StakingInfo> {
+  const ts = getTonstakersInstance(new ReadOnlyConnector());
+
   try {
-    const [stakingData, poolInfo] = await Promise.all([
-      fetchTonstakersCache().catch(() => null),
-      fetchTonApiPoolInfo().catch(() => null),
-    ]);
+    const apy = await ts.getCurrentApy();
+    const tvl = await ts.getTvl();
+    const stakers = await ts.getStakersCount();
+    const rates = await ts.getRates();
 
-    const apyValue = stakingData?.currentApy ?? poolInfo?.apy ?? null;
-    const tvlNano = parseNano(stakingData?.tvl ?? poolInfo?.total_amount ?? null);
-    const minStakeNano = parseNano(poolInfo?.min_stake ?? null) ?? TON_NANO;
-    const stakersValue = stakingData?.stakers ?? poolInfo?.current_nominators ?? null;
-    const tsTonPrice = stakingData?.tsTONPrice ?? null;
+    const currentRate = rates?.tsTonToTon ?? 1.0;
 
-    if (apyValue !== null && tvlNano !== null && stakersValue !== null) {
-      return {
-        apy: `${apyValue.toFixed(2)}%`,
-        tvlTon: formatTonFromNano(tvlNano),
-        tstonRate:
-          typeof tsTonPrice === "number" && Number.isFinite(tsTonPrice)
-            ? `1 tsTON ≈ ${tsTonPrice.toFixed(4)} TON`
-            : "~1:1 (liquid)",
-        minStake: `${formatTonFromNano(minStakeNano)} TON`,
-        stakersCount: new Intl.NumberFormat("en-US").format(stakersValue),
-      };
-    }
+    return {
+      apy: `${apy.toFixed(2)}%`,
+      tvlTon: formatTonFromNano(tvl),
+      tstonRate: `1 tsTON ≈ ${currentRate.toFixed(4)} TON`,
+      minStake: "1 TON",
+      stakersCount: new Intl.NumberFormat("en-US").format(stakers),
+    };
   } catch (error) {
-    console.error("[Stake] Failed to fetch staking info:", error);
+    console.error("[Stake] Failed to fetch staking info from SDK:", error);
+    return {
+      apy: "--",
+      tvlTon: "--",
+      tstonRate: "--",
+      minStake: "1 TON",
+      stakersCount: "--",
+    };
   }
-
-  // Safe fallback when APIs are unavailable.
-  return {
-    apy: "--",
-    tvlTon: "--",
-    tstonRate: "--",
-    minStake: "1 TON",
-    stakersCount: "--",
-  };
 }
 
 export interface StakeTransactionParams {
@@ -149,12 +99,9 @@ export interface StakeTransactionParams {
 }
 
 /**
- * Build stake transaction parameters.
- * The actual signing and sending happens client-side.
+ * Standard description builder for compatibility
  */
-export function buildStakeTransaction(
-  amountTon: string,
-): StakeTransactionParams {
+export function buildStakeTransaction(amountTon: string): StakeTransactionParams {
   return {
     type: "stake",
     amount: amountTon,
@@ -163,16 +110,28 @@ export function buildStakeTransaction(
   };
 }
 
-/**
- * Build unstake transaction parameters.
- */
-export function buildUnstakeTransaction(
-  amountTsTon: string,
-): StakeTransactionParams {
+export function buildUnstakeTransaction(amountTsTon: string): StakeTransactionParams {
   return {
     type: "unstake",
     amount: amountTsTon,
     poolAddress: TONSTAKERS_POOL_ADDRESS,
     description: `Unstake ${amountTsTon} tsTON from Tonstakers. Standard unstaking takes ~18 hours (end of validation cycle).`,
   };
+}
+
+/**
+ * Generates exact blockchain payload messages using Tonstakers SDK natively.
+ */
+export async function generateStakeMessages(amountNano: bigint) {
+  const interceptor = new InterceptConnector();
+  const ts = getTonstakersInstance(interceptor);
+  await ts.stake(amountNano); // Populates the interceptor securely without signing
+  return interceptor.capturedTx?.messages ?? [];
+}
+
+export async function generateUnstakeMessages(amountNano: bigint) {
+  const interceptor = new InterceptConnector();
+  const ts = getTonstakersInstance(interceptor);
+  await ts.unstake(amountNano); 
+  return interceptor.capturedTx?.messages ?? [];
 }

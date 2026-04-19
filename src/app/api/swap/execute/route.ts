@@ -96,14 +96,33 @@ export async function POST(request: NextRequest): Promise<Response> {
     omniston = new Omniston({
       apiUrl: process.env.OMNISTON_API_URL?.trim() || DEFAULT_OMNISTON_API_URL,
     });
-    const transfer = await omniston.buildTransfer({
-      sourceAddress: omniAddress,
-      destinationAddress: omniAddress,
-      gasExcessAddress: omniAddress,
-      refundAddress: omniAddress,
-      quote: quotePayload,
-      useRecommendedSlippage: true,
-    });
+
+    let transfer = null;
+    let lastError: unknown = null;
+
+    // Retry loop to handle asynchronous websocket connection delays and JSON-RPC errors
+    for (let attempts = 0; attempts < 5; attempts++) {
+      try {
+        transfer = await omniston.buildTransfer({
+          sourceAddress: omniAddress,
+          destinationAddress: omniAddress,
+          gasExcessAddress: omniAddress,
+          refundAddress: omniAddress,
+          quote: quotePayload,
+          useRecommendedSlippage: true,
+        });
+        break; // Success
+      } catch (error) {
+        lastError = error;
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+    }
+
+    if (!transfer) {
+      throw lastError instanceof Error
+        ? lastError
+        : new Error("Failed to execute buildTransfer after retries.");
+    }
 
     const messages = transfer.ton?.messages ?? [];
     if (messages.length === 0) {
@@ -120,8 +139,27 @@ export async function POST(request: NextRequest): Promise<Response> {
     });
   } catch (error) {
     console.error("[SwapExecute] Failed to build transfer:", error);
+    const errorMessage = error instanceof Error
+      ? error.message
+      : "Could not prepare swap execution right now.";
+    const normalizedMessage = errorMessage.toLowerCase();
+    if (normalizedMessage.includes("slippage")) {
+      return NextResponse.json(
+        { error: "Price moved outside slippage tolerance. Refresh the quote and try again." },
+        { status: 422 },
+      );
+    }
+    if (
+      normalizedMessage.includes("internal server error: 300")
+      || normalizedMessage.includes("quote")
+    ) {
+      return NextResponse.json(
+        { error: "Quote is no longer executable. Fetch a fresh quote and try again." },
+        { status: 422 },
+      );
+    }
     return NextResponse.json(
-      { error: "Could not prepare swap execution right now." },
+      { error: errorMessage || "Could not prepare swap execution right now." },
       { status: 500 },
     );
   } finally {

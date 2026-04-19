@@ -1,16 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Address as TonAddress, beginCell } from "@ton/core";
+import { Address as TonAddress } from "@ton/core";
 
-import { buildStakeTransaction } from "@/lib/defi/stake";
+import { buildStakeTransaction, generateStakeMessages } from "@/lib/defi/stake";
 import { parseTokenAmount } from "@/lib/defi/tokens";
 
 export const runtime = "nodejs";
 
 const TON_DECIMALS = 9;
-const STAKE_FEE_RESERVE_TON = "1";
-const TONSTAKERS_STAKE_OP = 0x47d54391;
-const TONSTAKERS_QUERY_ID = 1n;
-const TONSTAKERS_PARTNER_CODE = 0x000000106796caefn;
 
 interface StakeExecuteRequestBody {
   amountTon?: string;
@@ -60,36 +56,25 @@ export async function POST(request: NextRequest): Promise<Response> {
       );
     }
 
-    const txParams = buildStakeTransaction(amountTon);
     const amountNano = parseTokenAmount(amountTon, TON_DECIMALS);
-    const feeReserveNano = parseTokenAmount(STAKE_FEE_RESERVE_TON, TON_DECIMALS);
-    const sendAmount = amountNano + feeReserveNano;
-
-    const payload = beginCell()
-      .storeUint(TONSTAKERS_STAKE_OP, 32)
-      .storeUint(TONSTAKERS_QUERY_ID, 64)
-      .storeUint(TONSTAKERS_PARTNER_CODE, 64)
-      .endCell()
-      .toBoc()
-      .toString("hex");
+    
+    // Fetch officially generated message cells natively via tonstakers-sdk integration
+    const generatedMessages = await generateStakeMessages(amountNano);
 
     return NextResponse.json({
       action: "stake",
       walletAddress: normalizedWalletAddress,
       amountTon,
       amountNano: amountNano.toString(),
-      feeReserveTon: STAKE_FEE_RESERVE_TON,
-      feeReserveNano: feeReserveNano.toString(),
-      messages: [
-        {
-          targetAddress: txParams.poolAddress,
-          sendAmount: sendAmount.toString(),
-          payload,
-        },
-      ],
+      // Directly map Tonstakers SDK messages to frontend schema format
+      messages: generatedMessages.map((msg) => ({
+        targetAddress: msg.address,
+        sendAmount: msg.amount,
+        payload: msg.payload,
+      })),
     });
   } catch (error) {
-    console.error("[StakeExecute] Failed to prepare stake transfer:", error);
+    console.error("[StakeExecute] Failed to prepare stake transfer via SDK:", error);
     return NextResponse.json(
       { error: "Could not prepare stake execution right now." },
       { status: 500 },

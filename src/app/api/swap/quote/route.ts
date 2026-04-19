@@ -27,6 +27,7 @@ const NO_QUOTE_GRACE_MS = 350;
 const QUOTE_RETRY_ATTEMPTS = 2;
 const QUOTE_RETRY_DELAY_MS = 200;
 const DEFAULT_OMNISTON_API_URL = "wss://omni-ws.ston.fi";
+const DEFAULT_MAX_SLIPPAGE_BPS = 100;
 
 interface SwapQuoteRequestBody {
   offerTokenSymbol?: string;
@@ -183,7 +184,7 @@ async function requestBestQuote(params: {
           amount: { bidUnits: params.bidUnits },
           settlementMethods: [SettlementMethod.SETTLEMENT_METHOD_SWAP],
           settlementParams: {
-            maxPriceSlippageBps: 0,
+            maxPriceSlippageBps: DEFAULT_MAX_SLIPPAGE_BPS,
             maxOutgoingMessages: 4,
             gaslessSettlement: GaslessSettlement.GASLESS_SETTLEMENT_POSSIBLE,
           },

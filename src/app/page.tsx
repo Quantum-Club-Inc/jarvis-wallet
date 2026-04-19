@@ -323,13 +323,24 @@ function withTimeout<T>(
   });
 }
 
-function parseCellFromHex(rawHex?: string): Cell | undefined {
-  const hex = rawHex?.trim();
-  if (!hex) {
+function parseCellFromEncoded(rawCell?: string): Cell | undefined {
+  const serialized = rawCell?.trim();
+  if (!serialized) {
     return undefined;
   }
 
-  return Cell.fromHex(hex);
+  const normalizedBase64 = serialized.replace(/-/g, "+").replace(/_/g, "/");
+  try {
+    return Cell.fromBase64(normalizedBase64);
+  } catch {
+    // Fall back to hex parsing for providers that return BOC in hex.
+  }
+
+  if (/^[0-9a-f]+$/i.test(serialized) && serialized.length % 2 === 0) {
+    return Cell.fromHex(serialized);
+  }
+
+  throw new Error("Swap message payload is not a valid TON cell.");
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -584,6 +595,8 @@ function JarvisApp() {
   const [stakeOverview, setStakeOverview] = useState<StakeOverviewResponse | null>(null);
   const [stakeLoading, setStakeLoading] = useState(false);
   const [stakeError, setStakeError] = useState<string | null>(null);
+  const [stakeExecuting, setStakeExecuting] = useState(false);
+  const [stakeSuccess, setStakeSuccess] = useState<string | null>(null);
   const [stakeAmountInput, setStakeAmountInput] = useState("10");
   const [seedPhraseWords, setSeedPhraseWords] = useState<string[] | null>(null);
   const [seedPhraseVisible, setSeedPhraseVisible] = useState(false);
@@ -1444,8 +1457,8 @@ function JarvisApp() {
     const seqno = await openedWallet.getSeqno();
 
     const transferMessages = messages.map((message) => {
-      const body = parseCellFromHex(message.payload);
-      const stateInitCell = parseCellFromHex(message.jettonWalletStateInit);
+      const body = parseCellFromEncoded(message.payload);
+      const stateInitCell = parseCellFromEncoded(message.jettonWalletStateInit);
 
       return internal({
         to: message.targetAddress,
@@ -1509,6 +1522,52 @@ function JarvisApp() {
       setSwapExecuting(false);
     }
   }, [sendTonMessages, swapQuote, walletAddress]);
+
+  const handleStakeExecution = useCallback(async () => {
+    if (!walletAddress) {
+      setStakeError("Wallet is not ready yet.");
+      return;
+    }
+
+    if (!stakeAmountIsValid) {
+      setStakeError("Enter a valid stake amount.");
+      return;
+    }
+
+    setStakeExecuting(true);
+    setStakeError(null);
+    setStakeSuccess(null);
+
+    try {
+      const executionResponse = await fetch("/api/stake/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amountTon: stakeAmountInput,
+          walletAddress,
+        }),
+      });
+
+      const executionPayload = (await executionResponse.json()) as unknown;
+      if (!executionResponse.ok) {
+        throw new Error(readApiError(executionPayload, "Failed to prepare stake execution."));
+      }
+
+      const execution = executionPayload as { messages?: SwapExecuteMessage[] };
+      if (!Array.isArray(execution.messages) || execution.messages.length === 0) {
+        throw new Error("No execution messages were returned.");
+      }
+
+      await sendTonMessages(execution.messages);
+      setStakeSuccess("Stake submitted on-chain. It may take a minute to process.");
+    } catch (error) {
+      setStakeError(
+        error instanceof Error ? error.message : "Failed to submit stake transaction.",
+      );
+    } finally {
+      setStakeExecuting(false);
+    }
+  }, [sendTonMessages, stakeAmountInput, stakeAmountIsValid, walletAddress]);
 
   const flipSwapPair = useCallback(() => {
     setSwapFromSymbol((currentFrom) => {
@@ -2089,22 +2148,22 @@ function JarvisApp() {
             <Button
               type="button"
               className="mt-3 h-11 w-full rounded-xl bg-white text-zinc-900 hover:bg-zinc-100"
-              disabled={!stakeAmountIsValid}
-              onClick={() => {
-                setWalletPage("home");
-                setHomeMode("chat");
-                sendMessage({
-                  text: `I want to stake ${stakeAmountInput} TON. Walk me through the safest way and required steps.`,
-                });
-              }}
+              disabled={stakeExecuting || !stakeAmountIsValid || stakeLoading}
+              onClick={handleStakeExecution}
             >
-              Continue with staking assistant
+              {stakeExecuting ? "Submitting stake..." : "Stake now"}
             </Button>
           </div>
 
           {stakeError && (
             <div className="mt-3 rounded-xl border border-rose-300/30 bg-rose-900/20 px-3 py-2 text-sm text-rose-200">
               {stakeError}
+            </div>
+          )}
+
+          {stakeSuccess && (
+            <div className="mt-3 rounded-xl border border-emerald-300/30 bg-emerald-900/20 px-3 py-2 text-sm text-emerald-200">
+              {stakeSuccess}
             </div>
           )}
 

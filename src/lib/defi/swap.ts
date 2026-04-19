@@ -1,10 +1,8 @@
 import "server-only";
 
-import { StonApiClient } from "@ston-fi/api";
-
 import { formatTokenAmount, resolveToken, type TokenInfo } from "@/lib/defi/tokens";
 
-const apiClient = new StonApiClient();
+const DEFAULT_STON_API_URL = "https://api.ston.fi";
 
 export interface SwapSimulation {
   offerToken: TokenInfo;
@@ -41,19 +39,32 @@ export async function simulateSwap(params: {
     BigInt(Math.round(parseFloat(params.offerAmount) * 10 ** offerToken.decimals))
   ).toString();
 
-  const simulation = await apiClient.simulateSwap({
-    offerAddress: offerToken.address,
-    askAddress: askToken.address,
-    offerUnits,
-    slippageTolerance: "0.01",
+  const apiUrl = process.env.STON_API_URL?.trim() || DEFAULT_STON_API_URL;
+  const url = new URL(`${apiUrl}/v1/swap/simulate`);
+  url.searchParams.append("offer_address", offerToken.address);
+  url.searchParams.append("ask_address", askToken.address);
+  url.searchParams.append("units", offerUnits);
+  url.searchParams.append("slippage_tolerance", "0.01");
+
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
   });
 
+  if (!response.ok) {
+    if (response.status === 429) {
+      throw new Error("Too many swap simulation requests. Please try again later.");
+    }
+    throw new Error(`Swap simulation failed with status ${response.status}`);
+  }
+
+  const payload = await response.json();
   const askAmount = formatTokenAmount(
-    BigInt(simulation.askUnits),
+    BigInt(payload.ask_units),
     askToken.decimals,
   );
   const minAskAmount = formatTokenAmount(
-    BigInt(simulation.minAskUnits),
+    BigInt(payload.min_ask_units),
     askToken.decimals,
   );
   const offerFormatted = formatTokenAmount(
@@ -71,10 +82,10 @@ export async function simulateSwap(params: {
     offerAmount: offerFormatted,
     askAmount,
     minAskAmount,
-    priceImpact: simulation.priceImpact ?? "0",
+    priceImpact: payload.price_impact ?? "0",
     swapRate,
-    routerAddress: simulation.routerAddress,
-    poolAddress: simulation.poolAddress,
+    routerAddress: payload.router_address,
+    poolAddress: payload.pool_address,
   };
 }
 
@@ -88,19 +99,29 @@ export async function getTokenPrice(
   if (!token) return null;
 
   try {
-    const assets = await apiClient.getAssets();
+    const apiUrl = process.env.STON_API_URL?.trim() || DEFAULT_STON_API_URL;
+    const response = await fetch(`${apiUrl}/v1/assets`, {
+      next: { revalidate: 300 }, // Cache globally for 5 minutes to avoid 429s
+    });
+
+    if (!response.ok) return null;
+
+    const payload = await response.json();
+    const assets = payload.asset_list || [];
+    
     const asset = assets.find(
-      (a: { contractAddress: string }) =>
-        a.contractAddress.toLowerCase() === token.address.toLowerCase(),
+      (a: { contract_address: string }) =>
+        a.contract_address?.toLowerCase() === token.address.toLowerCase(),
     );
 
     if (!asset) return null;
 
     return {
       symbol: token.symbol,
-      priceUsd: (asset as { dexPriceUsd?: string }).dexPriceUsd ?? "unknown",
+      priceUsd: asset.dex_price_usd ?? "unknown",
     };
   } catch {
     return null;
   }
 }
+

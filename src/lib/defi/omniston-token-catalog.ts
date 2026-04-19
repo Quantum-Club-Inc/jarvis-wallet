@@ -1,11 +1,9 @@
 import "server-only";
 
-import { StonApiClient } from "@ston-fi/api";
-
 import { KNOWN_TOKENS } from "@/lib/defi/tokens";
 
 const DEFAULT_STON_API_URL = "https://api.ston.fi";
-const TOKEN_CATALOG_TTL_MS = 5 * 60 * 1000;
+const TOKEN_CATALOG_TTL_MS = 15 * 60 * 1000; // Increased to 15 mins to reduce 429 errors
 const MAX_SWAP_TOKEN_OPTIONS = 18;
 
 export interface SwapTokenCatalogItem {
@@ -30,18 +28,14 @@ interface CandidateToken extends SwapTokenCatalogItem {
   score: number;
 }
 
-const stonApiClient = new StonApiClient({
-  baseURL: process.env.STON_API_URL?.trim() || DEFAULT_STON_API_URL,
-});
-
 let cachedCatalog: CachedCatalog | null = null;
 
 function normalizeAddress(address: string) {
   return address.trim().toLowerCase();
 }
 
-function scoreAsset(asset: Awaited<ReturnType<StonApiClient["getAssets"]>>[number]) {
-  const popularityScore = typeof asset.popularityIndex === "number" ? asset.popularityIndex : 0;
+function scoreAsset(asset: any) {
+  const popularityScore = typeof asset.popularity_index === "number" ? asset.popularity_index : 0;
   const priorityScore = typeof asset.priority === "number" ? asset.priority : 0;
   return popularityScore * 100 + priorityScore;
 }
@@ -180,36 +174,35 @@ function buildCatalogFromCandidates(candidates: CandidateToken[]): SwapTokenCata
 }
 
 async function fetchFreshCatalog(): Promise<SwapTokenCatalog> {
-  const [assets, pairs] = await Promise.all([
-    stonApiClient.getAssets(),
-    stonApiClient.getSwapPairs(),
-  ]);
-  const pairAddressSet = new Set(
-    pairs.flatMap(([offerAddress, askAddress]) => [
-      normalizeAddress(offerAddress),
-      normalizeAddress(askAddress),
-    ]),
-  );
+  const apiUrl = process.env.STON_API_URL?.trim() || DEFAULT_STON_API_URL;
+
+  // Use cached Next.js fetch to avoid STON 429 rate limits across serverless functions
+  const response = await fetch(`${apiUrl}/v1/assets`, {
+    next: { revalidate: 300 }, // Cache for 5 minutes globally
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch assets from STON API: ${response.status}`);
+  }
+
+  const payload = await response.json() as any;
+  const assets = payload.asset_list || [];
 
   const candidates: CandidateToken[] = [];
 
   for (const asset of assets) {
     const symbol = asset.symbol?.trim().toUpperCase();
-    const address = asset.contractAddress?.trim();
+    const address = asset.contract_address?.trim();
     if (!symbol || !address || !Number.isFinite(asset.decimals)) {
-      continue;
-    }
-
-    if (pairAddressSet.size > 0 && !pairAddressSet.has(normalizeAddress(address))) {
       continue;
     }
 
     candidates.push({
       symbol,
-      name: asset.displayName?.trim() || symbol,
+      name: asset.display_name?.trim() || symbol,
       address,
       decimals: asset.decimals,
-      imageUrl: asset.imageUrl ?? null,
+      imageUrl: asset.image_url ?? null,
       score: scoreAsset(asset),
     });
   }

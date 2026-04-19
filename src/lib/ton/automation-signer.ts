@@ -47,13 +47,24 @@ function parseMnemonic(rawMnemonic: string): string[] {
   return mnemonic;
 }
 
-function parseCellFromHex(rawHex?: string): Cell | undefined {
-  const hex = rawHex?.trim();
-  if (!hex) {
+function parseCellFromEncoded(rawCell?: string): Cell | undefined {
+  const serialized = rawCell?.trim();
+  if (!serialized) {
     return undefined;
   }
 
-  return Cell.fromHex(hex);
+  const normalizedBase64 = serialized.replace(/-/g, "+").replace(/_/g, "/");
+  try {
+    return Cell.fromBase64(normalizedBase64);
+  } catch {
+    // Fall back to hex parsing for providers that return BOC in hex.
+  }
+
+  if (/^[0-9a-f]+$/i.test(serialized) && serialized.length % 2 === 0) {
+    return Cell.fromHex(serialized);
+  }
+
+  throw new Error("Automation transfer message contains an invalid TON cell.");
 }
 
 async function buildSignerContext(): Promise<AutomationSignerContext> {
@@ -235,8 +246,8 @@ export async function sendAutomationTransfer(
   );
 
   const transferMessages = messages.map((message) => {
-    const body = parseCellFromHex(message.payload);
-    const stateInitCell = parseCellFromHex(message.jettonWalletStateInit);
+    const body = parseCellFromEncoded(message.payload);
+    const stateInitCell = parseCellFromEncoded(message.jettonWalletStateInit);
 
     return internal({
       to: message.targetAddress,
