@@ -2,14 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { Address as TonAddress } from "@ton/core";
 import {
   Blockchain,
-  Omniston,
   type Address,
   type Quote,
 } from "@ston-fi/omniston-sdk";
+import { getOmnistonClient } from "@/lib/defi/omniston-client";
 
 export const runtime = "nodejs";
-
-const DEFAULT_OMNISTON_API_URL = "wss://omni-ws.ston.fi";
 
 interface SwapExecuteRequestBody {
   quoteId?: string;
@@ -45,8 +43,6 @@ function isQuotePayload(value: unknown): value is Quote {
 }
 
 export async function POST(request: NextRequest): Promise<Response> {
-  let omniston: Omniston | null = null;
-
   try {
     const body = (await request.json()) as SwapExecuteRequestBody;
     const quoteId = body.quoteId?.trim();
@@ -93,9 +89,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     }
 
     const omniAddress = toOmniAddress(normalizedWalletAddress);
-    omniston = new Omniston({
-      apiUrl: process.env.OMNISTON_API_URL?.trim() || DEFAULT_OMNISTON_API_URL,
-    });
+    const omniston = getOmnistonClient();
 
     let transfer = null;
     let lastError: unknown = null;
@@ -114,6 +108,12 @@ export async function POST(request: NextRequest): Promise<Response> {
         break; // Success
       } catch (error) {
         lastError = error;
+        if (
+          error instanceof Error
+          && (error.message.toLowerCase().includes("429") || error.message.toLowerCase().includes("too many"))
+        ) {
+          break;
+        }
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
     }
@@ -149,6 +149,12 @@ export async function POST(request: NextRequest): Promise<Response> {
         { status: 422 },
       );
     }
+    if (normalizedMessage.includes("429") || normalizedMessage.includes("too many")) {
+      return NextResponse.json(
+        { error: "Swap provider is rate-limiting requests right now. Retry in a few seconds." },
+        { status: 429 },
+      );
+    }
     if (
       normalizedMessage.includes("internal server error: 300")
       || normalizedMessage.includes("quote")
@@ -162,7 +168,5 @@ export async function POST(request: NextRequest): Promise<Response> {
       { error: errorMessage || "Could not prepare swap execution right now." },
       { status: 500 },
     );
-  } finally {
-    omniston?.close();
   }
 }

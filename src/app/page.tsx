@@ -73,6 +73,7 @@ const FIRST_TIME_INTRO_INTERVAL_MS = 3000;
 const VOICE_AUTO_RESUME_DELAY_MS = 1300;
 const VOICE_POST_SPEECH_COOLDOWN_MS = 1800;
 const VOICE_ECHO_GUARD_WINDOW_MS = 8000;
+const SWAP_AUTO_QUOTE_DEBOUNCE_MS = 900;
 const WALLET_STORAGE_TIMEOUT_MS = 5000;
 const WELCOME_STORAGE_TIMEOUT_MS = 3000;
 const TONCENTER_RPC_ENDPOINT = "https://toncenter.com/api/v2/jsonRPC";
@@ -398,6 +399,11 @@ function isLikelySpeechEcho(transcript: string, spokenText: string): boolean {
 
   const overlapRatio = sharedCount / Math.min(transcriptSet.size, spokenSet.size);
   return overlapRatio >= 0.65;
+}
+
+function isValidSwapAmountInput(value: string): boolean {
+  const trimmed = value.trim();
+  return /^[0-9]+(\.[0-9]+)?$/.test(trimmed) && Number(trimmed) > 0;
 }
 
 function InitialLoader() {
@@ -1420,13 +1426,16 @@ function JarvisApp() {
     if (!selectedSwapFrom || !selectedSwapTo || !swapAmount.trim()) {
       return;
     }
+    if (!isValidSwapAmountInput(swapAmount)) {
+      return;
+    }
     if (selectedSwapFrom.symbol === selectedSwapTo.symbol) {
       return;
     }
 
     const timeoutId = window.setTimeout(() => {
       void handleSwapQuote();
-    }, 380);
+    }, SWAP_AUTO_QUOTE_DEBOUNCE_MS);
 
     return () => window.clearTimeout(timeoutId);
   }, [handleSwapQuote, selectedSwapFrom, selectedSwapTo, swapAmount, walletPage]);
