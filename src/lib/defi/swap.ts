@@ -1,8 +1,9 @@
 import "server-only";
 
 import { formatTokenAmount, parseTokenAmount, resolveToken, type TokenInfo } from "@/lib/defi/tokens";
+import { getSwapTokenCatalog } from "@/lib/defi/omniston-token-catalog";
 
-const DEFAULT_STON_API_URL = "https://api.ston.fi";
+const DEFAULT_STON_API_URL = "https://api.ston.fi"; // used by simulateSwap
 
 export interface SwapSimulation {
   offerToken: TokenInfo;
@@ -97,26 +98,13 @@ export async function getTokenPrice(
   if (!token) return null;
 
   try {
-    const apiUrl = process.env.STON_API_URL?.trim() || DEFAULT_STON_API_URL;
-    const response = await fetch(`${apiUrl}/v1/assets`, {
-      next: { revalidate: 300 }, // Cache globally for 5 minutes to avoid 429s
-    });
-
-    if (!response.ok) return null;
-
-    const payload = await response.json();
-    const assets = payload.asset_list || [];
-    
-    const asset = assets.find(
-      (a: { contract_address: string }) =>
-        a.contract_address?.toLowerCase() === token.address.toLowerCase(),
-    );
-
-    if (!asset) return null;
+    const catalog = await getSwapTokenCatalog();
+    const catalogToken = catalog.byAddress.get(token.address.toLowerCase());
+    if (!catalogToken?.priceUsd) return null;
 
     return {
       symbol: token.symbol,
-      priceUsd: asset.dex_price_usd ?? "unknown",
+      priceUsd: catalogToken.priceUsd,
     };
   } catch {
     return null;

@@ -35,12 +35,19 @@ class ReadOnlyConnector {
 /** InterceptConnector catches the transaction payload without sending it */
 class InterceptConnector {
   public capturedTx: TransactionDetails | null = null;
+  private statusCallback: ((wallet: unknown) => void) | null = null;
+
   async sendTransaction(tx: TransactionDetails): Promise<{ boc: string }> {
     this.capturedTx = tx;
     return { boc: "" };
   }
-  onStatusChange(): void {
-    // no-op
+
+  onStatusChange(callback: (wallet: unknown) => void): void {
+    this.statusCallback = callback;
+  }
+
+  triggerWallet(address: string): void {
+    this.statusCallback?.({ account: { address, chain: "-239" } });
   }
 }
 
@@ -122,12 +129,31 @@ export function buildUnstakeTransaction(amountTsTon: string): StakeTransactionPa
   };
 }
 
+async function initializeSdkWithWallet(
+  ts: InstanceType<typeof Tonstakers>,
+  interceptor: InterceptConnector,
+  walletAddress: string,
+): Promise<void> {
+  // initialize() is called in the Tonstakers constructor; it registers the onStatusChange callback.
+  // Triggering the connector's callback simulates a wallet connection, causing setupWallet() to run.
+  interceptor.triggerWallet(walletAddress);
+  // Wait for the SDK's "initialized" event (dispatched inside setupWallet after async chain call)
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("Tonstakers SDK initialization timed out.")), 15_000);
+    ts.addEventListener("initialized", () => {
+      clearTimeout(timeout);
+      resolve();
+    }, { once: true });
+  });
+}
+
 /**
  * Generates exact blockchain payload messages using Tonstakers SDK natively.
  */
-export async function generateStakeMessages(amountNano: bigint) {
+export async function generateStakeMessages(amountNano: bigint, walletAddress: string) {
   const interceptor = new InterceptConnector();
   const ts = getTonstakersInstance(interceptor);
+  await initializeSdkWithWallet(ts, interceptor, walletAddress);
   try {
     await ts.stake(amountNano);
   } catch (error) {
@@ -140,9 +166,10 @@ export async function generateStakeMessages(amountNano: bigint) {
   return messages;
 }
 
-export async function generateUnstakeMessages(amountNano: bigint) {
+export async function generateUnstakeMessages(amountNano: bigint, walletAddress: string) {
   const interceptor = new InterceptConnector();
   const ts = getTonstakersInstance(interceptor);
+  await initializeSdkWithWallet(ts, interceptor, walletAddress);
   try {
     await ts.unstake(amountNano);
   } catch (error) {

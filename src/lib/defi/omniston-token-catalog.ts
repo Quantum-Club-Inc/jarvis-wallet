@@ -12,6 +12,7 @@ export interface SwapTokenCatalogItem {
   address: string;
   decimals: number;
   imageUrl: string | null;
+  priceUsd: string | null;
 }
 
 export interface SwapTokenCatalog {
@@ -47,6 +48,7 @@ function createFallbackCatalog(): SwapTokenCatalog {
     address: token.address,
     decimals: token.decimals,
     imageUrl: null,
+    priceUsd: null,
   }));
 
   return buildCatalogFromCandidates(
@@ -73,6 +75,7 @@ function buildCatalogFromCandidates(candidates: CandidateToken[]): SwapTokenCata
       address: value.address,
       decimals: value.decimals,
       imageUrl: value.imageUrl,
+      priceUsd: value.priceUsd,
     });
   }
 
@@ -93,6 +96,7 @@ function buildCatalogFromCandidates(candidates: CandidateToken[]): SwapTokenCata
         address: knownToken.address,
         decimals: knownToken.decimals,
         imageUrl: null,
+        priceUsd: null,
         score: 1,
       });
     }
@@ -104,6 +108,7 @@ function buildCatalogFromCandidates(candidates: CandidateToken[]): SwapTokenCata
         address: knownToken.address,
         decimals: knownToken.decimals,
         imageUrl: null,
+        priceUsd: null,
       });
     }
   }
@@ -116,6 +121,7 @@ function buildCatalogFromCandidates(candidates: CandidateToken[]): SwapTokenCata
       address: token.address,
       decimals: token.decimals,
       imageUrl: token.imageUrl,
+      priceUsd: token.priceUsd,
     });
   }
 
@@ -132,6 +138,7 @@ function buildCatalogFromCandidates(candidates: CandidateToken[]): SwapTokenCata
       address: token.address,
       decimals: token.decimals,
       imageUrl: token.imageUrl,
+      priceUsd: token.priceUsd,
     }));
 
   const tokens: SwapTokenCatalogItem[] = [];
@@ -176,10 +183,7 @@ function buildCatalogFromCandidates(candidates: CandidateToken[]): SwapTokenCata
 async function fetchFreshCatalog(): Promise<SwapTokenCatalog> {
   const apiUrl = process.env.STON_API_URL?.trim() || DEFAULT_STON_API_URL;
 
-  // Use cached Next.js fetch to avoid STON 429 rate limits across serverless functions
-  const response = await fetch(`${apiUrl}/v1/assets`, {
-    next: { revalidate: 300 }, // Cache for 5 minutes globally
-  });
+  const response = await fetch(`${apiUrl}/v1/assets`, { cache: "no-store" });
 
   if (!response.ok) {
     throw new Error(`Failed to fetch assets from STON API: ${response.status}`);
@@ -203,6 +207,7 @@ async function fetchFreshCatalog(): Promise<SwapTokenCatalog> {
       address,
       decimals: asset.decimals,
       imageUrl: asset.image_url ?? null,
+      priceUsd: asset.dex_price_usd ?? null,
       score: scoreAsset(asset),
     });
   }

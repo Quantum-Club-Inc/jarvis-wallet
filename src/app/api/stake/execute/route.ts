@@ -68,7 +68,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     const amountNano = parseTokenAmount(amountTon, TON_DECIMALS);
     
     // Fetch officially generated message cells natively via tonstakers-sdk integration
-    const generatedMessages = await generateStakeMessages(amountNano);
+    const generatedMessages = await generateStakeMessages(amountNano, normalizedWalletAddress);
 
     return NextResponse.json({
       action: "stake",
