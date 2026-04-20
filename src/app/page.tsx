@@ -697,6 +697,7 @@ function JarvisApp() {
     }
 
     let active = true;
+    console.log("[Summary] Fetching for:", walletAddress);
 
     void (async () => {
       try {
@@ -1022,12 +1023,14 @@ function JarvisApp() {
 
   useEffect(() => {
     const voiceInput = transcript.trim();
-    if (isListening || !voiceInput) {
+    // Send as soon as transcript is ready and transcription is not still running.
+    // Do NOT gate on isListening — mic may stay open (continuous mode).
+    if (!voiceInput || isTranscribing) {
       return;
     }
 
     if (homeMode === "voice") {
-      if (isLoading || isSpeaking || isTranscribing) {
+      if (isLoading || isSpeaking) {
         resetTranscript();
         return;
       }
@@ -1055,7 +1058,6 @@ function JarvisApp() {
     resetTranscript();
   }, [
     homeMode,
-    isListening,
     isLoading,
     isSpeaking,
     isTranscribing,
@@ -1198,12 +1200,15 @@ function JarvisApp() {
 
       try {
         const wallet = await restoreWalletFromMnemonic(mnemonicWords);
+        console.log("[Import] Derived wallet address:", wallet.address);
+
         const stored = await withTimeout(
           storeWalletInSecureStorage(wallet.mnemonic, wallet.address),
           false,
           WALLET_STORAGE_TIMEOUT_MS,
           "[Wallet] Storage write timed out during wallet import.",
         );
+        console.log("[Import] Storage result:", stored);
 
         if (!stored) {
           throw new Error("Failed to securely store the imported wallet on this device.");

@@ -46,6 +46,8 @@ export function useVoice(): UseVoiceReturn {
   const silenceAutoStopEnabledRef = useRef(false);
   const micPermissionGrantedRef = useRef(false);
   const discardCaptureOnStopRef = useRef(false);
+  const segmentAndRestartRef = useRef(false); // true = silence triggered segment, restart immediately
+  const startMediaRecorderFallbackRef = useRef<(() => Promise<boolean>) | null>(null);
   const isSupported =
     typeof window !== "undefined" &&
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -174,6 +176,7 @@ export function useVoice(): UseVoiceReturn {
             silenceTimeoutRef.current = window.setTimeout(() => {
               silenceTimeoutRef.current = null;
               if (mediaRecorderRef.current?.state === "recording") {
+                segmentAndRestartRef.current = true; // restart after onstop
                 mediaRecorderRef.current.stop();
               }
             }, AUTO_STOP_SILENCE_MS);
@@ -441,30 +444,39 @@ export function useVoice(): UseVoiceReturn {
       };
 
       recorder.onstop = () => {
-        releaseMicStream();
-        silenceAutoStopEnabledRef.current = false;
-        clearSilenceTimeout();
-        stopVoiceLevelMeter();
-        setIsListening(false);
+        const isSegmentRestart = segmentAndRestartRef.current;
+        segmentAndRestartRef.current = false;
         mediaRecorderRef.current = null;
+
+        if (!isSegmentRestart) {
+          // Manual stop — release mic, clear UI state
+          releaseMicStream();
+          silenceAutoStopEnabledRef.current = false;
+          clearSilenceTimeout();
+          stopVoiceLevelMeter();
+          setIsListening(false);
+        }
 
         if (discardCaptureOnStopRef.current) {
           discardCaptureOnStopRef.current = false;
           recordedChunksRef.current = [];
           setTranscript("");
           setConfidence(0);
+          if (isSegmentRestart) void startMediaRecorderFallbackRef.current?.();
           return;
         }
 
-        if (recordedChunksRef.current.length === 0) {
-          setError("I couldn't catch that. Try speaking a bit longer.");
-          return;
-        }
-
-        const blobType = recorder.mimeType || "audio/webm";
-        const audioBlob = new Blob(recordedChunksRef.current, { type: blobType });
+        const chunks = recordedChunksRef.current;
         recordedChunksRef.current = [];
-        void transcribeAudioBlob(audioBlob);
+
+        if (chunks.length > 0) {
+          const blobType = recorder.mimeType || "audio/webm";
+          void transcribeAudioBlob(new Blob(chunks, { type: blobType }));
+        } else if (!isSegmentRestart) {
+          setError("I couldn't catch that. Try speaking a bit longer.");
+        }
+
+        if (isSegmentRestart) void startMediaRecorderFallbackRef.current?.();
       };
 
       mediaRecorderRef.current = recorder;
@@ -486,6 +498,9 @@ export function useVoice(): UseVoiceReturn {
     stopVoiceLevelMeter,
     transcribeAudioBlob,
   ]);
+
+  // Keep a stable ref so recorder.onstop can restart without stale closure
+  startMediaRecorderFallbackRef.current = startMediaRecorderFallback;
 
   const startListening = useCallback(async () => {
     if (isTranscribing) {
@@ -583,6 +598,15 @@ export function useVoice(): UseVoiceReturn {
     };
 
     recognition.onend = () => {
+      // If stop was not manually requested, auto-restart to keep mic open
+      if (!speechStopRequestedRef.current && isListening) {
+        try {
+          recognition.start();
+          return;
+        } catch {
+          // fall through to full stop below
+        }
+      }
       releaseMicStream();
       stopVoiceLevelMeter();
       setIsListening(false);
@@ -636,6 +660,7 @@ export function useVoice(): UseVoiceReturn {
   const stopListening = useCallback((options?: { discard?: boolean }) => {
     const shouldDiscard = Boolean(options?.discard);
     discardCaptureOnStopRef.current = shouldDiscard;
+    segmentAndRestartRef.current = false; // cancel any pending restart
 
     if (recognitionRef.current) {
       speechStopRequestedRef.current = true;
