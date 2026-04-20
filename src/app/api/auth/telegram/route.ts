@@ -8,6 +8,7 @@ import { requireEnv } from "@/lib/server/env";
 export const runtime = "nodejs";
 
 const TELEGRAM_HASH_HEX_LENGTH = 64;
+const INVALID_TELEGRAM_INIT_DATA_ERROR = "Invalid Telegram init data.";
 
 function getTelegramBotToken(): string {
   const token = requireEnv("TELEGRAM_BOT_TOKEN").trim();
@@ -75,10 +76,17 @@ function verifyTelegramWebAppData(initData: string): TelegramWebAppUser {
   const expectedHash = computeInitDataHash(initData, botToken);
 
   if (!constantTimeEqual(hash, expectedHash)) {
-    throw new Error("Invalid Telegram init data.");
+    throw new Error(INVALID_TELEGRAM_INIT_DATA_ERROR);
   }
 
   return extractUserFromParams(urlParams);
+}
+
+function isInvalidTelegramInitDataError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.trim() === INVALID_TELEGRAM_INIT_DATA_ERROR
+  );
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -130,10 +138,12 @@ export async function POST(request: Request): Promise<Response> {
 
     return NextResponse.json({ customToken, user: telegramUser });
   } catch (error) {
-    console.error(
-      "[TelegramAuth] Failed to authenticate Telegram user",
-      error,
-    );
+    if (!isInvalidTelegramInitDataError(error)) {
+      console.error(
+        "[TelegramAuth] Failed to authenticate Telegram user",
+        error,
+      );
+    }
     const errorMessage =
       error instanceof Error
         ? error.message

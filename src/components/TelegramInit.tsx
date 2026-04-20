@@ -300,8 +300,10 @@ export function TelegramInit({ children }: { children: ReactNode }) {
         return;
       }
 
-      setAuthState(result.success ? "authenticated" : "error");
-      setAuthError(result.success ? null : result.error);
+      setAuthState(
+        result.success ? "authenticated" : result.error ? "error" : "idle",
+      );
+      setAuthError(result.error);
     })();
 
     return () => {

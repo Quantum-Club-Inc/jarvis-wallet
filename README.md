@@ -7,7 +7,7 @@ Voice-first TON DeFi wallet for Telegram, built with Next.js and deployed on Ver
 - Next.js 16 (App Router, TypeScript, Tailwind CSS)
 - Firebase Firestore (`firebase`, `firebase-admin`) for app data
 - Google Gemini via Vercel AI SDK for Jarvis agent responses
-- Planned integrations: STON.fi, Tonstakers, AI agent APIs
+- STON.fi widget + Tonstakers + AI agent APIs
 
 ## Firebase setup
 
@@ -72,6 +72,7 @@ Open `http://localhost:3000`.
 - Bot webhook: `POST /api/webhook`
 - n8n automation webhook: `POST /api/automation/n8n`
 - Voice transcription endpoint: `POST /api/voice/transcribe`
+- TON Connect manifest endpoint: `GET /api/tonconnect-manifest`
 
 The webhook route handles `/start`, `/help`, and forwards plain-text user requests to the AI agent.
 

@@ -20,6 +20,7 @@ import {
 
 import { AssetOverview } from "@/components/AssetOverview";
 import { ChatThread } from "@/components/ChatThread";
+import { StonSwapWidget } from "@/components/StonSwapWidget";
 import { TelegramInit, useTelegram } from "@/components/TelegramInit";
 import { VoiceOrb, type OrbState } from "@/components/VoiceOrb";
 import { Badge } from "@/components/ui/badge";
@@ -585,6 +586,7 @@ function JarvisApp() {
   const [swapError, setSwapError] = useState<string | null>(null);
   const [swapExecuting, setSwapExecuting] = useState(false);
   const [swapSuccess, setSwapSuccess] = useState<string | null>(null);
+  const [swapWidgetLoadError, setSwapWidgetLoadError] = useState<string | null>(null);
   const swapQuoteAbortRef = useRef<AbortController | null>(null);
   const swapQuoteCacheRef = useRef<Map<string, SwapQuoteResponse>>(new Map());
   const voiceModeAutoOpenedRef = useRef(false);
@@ -1247,6 +1249,7 @@ function JarvisApp() {
   const handleFloatingMicPress = useCallback(() => {
     if (walletPage !== "home") {
       setWalletPage("home");
+      setSwapWidgetLoadError(null);
     }
     if (homeMode !== "voice") {
       setHomeMode("voice");
@@ -1256,6 +1259,7 @@ function JarvisApp() {
 
   const handleWalletPageChange = useCallback((nextPage: WalletPage) => {
     setWalletPage(nextPage);
+    setSwapWidgetLoadError(null);
     if (nextPage === "stake") {
       setStakeLoading(true);
       setStakeError(null);
@@ -1414,7 +1418,7 @@ function JarvisApp() {
   }, [selectedSwapFrom, selectedSwapTo, swapAmount]);
 
   useEffect(() => {
-    if (walletPage !== "swap") {
+    if (walletPage !== "swap" || !swapWidgetLoadError) {
       return;
     }
     if (!selectedSwapFrom || !selectedSwapTo || !swapAmount.trim()) {
@@ -1429,7 +1433,14 @@ function JarvisApp() {
     }, 380);
 
     return () => window.clearTimeout(timeoutId);
-  }, [handleSwapQuote, selectedSwapFrom, selectedSwapTo, swapAmount, walletPage]);
+  }, [
+    handleSwapQuote,
+    selectedSwapFrom,
+    selectedSwapTo,
+    swapAmount,
+    swapWidgetLoadError,
+    walletPage,
+  ]);
 
   const sendTonMessages = useCallback(async (messages: SwapExecuteMessage[]) => {
     if (!walletAddress) {
@@ -1864,7 +1875,7 @@ function JarvisApp() {
               Swaps
             </h2>
             <p className="mt-2 text-sm leading-[1.55] text-zinc-300">
-              Select a token pair, request a live quote, then review the route before execution.
+              Swap directly with the embedded STON.fi widget.
             </p>
             <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-zinc-400">
               <span>Powered by</span>
@@ -1884,179 +1895,203 @@ function JarvisApp() {
               </a>
             </p>
           </div>
-
-          <div className="mt-4 grid gap-3">
-            <div className="grid grid-cols-2 gap-2.5">
-              <label className="flex flex-col gap-1.5">
-                <span className="text-[0.7rem] tracking-[0.08em] text-zinc-400">From</span>
-                {swapTokensLoading ? (
-                  <Skeleton className="h-11 rounded-xl bg-zinc-900/70" />
-                ) : (
-                  <SwapTokenDropdown
-                    label="From"
-                    value={swapFromSymbol}
-                    tokens={activeSwapTokens}
-                    onValueChange={(symbol) => {
-                      setSwapFromSymbol(symbol);
-                      setSwapQuote(null);
-                      setSwapError(null);
-                      setSwapSuccess(null);
-                    }}
-                  />
-                )}
-              </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-[0.7rem] tracking-[0.08em] text-zinc-400">To</span>
-                {swapTokensLoading ? (
-                  <Skeleton className="h-11 rounded-xl bg-zinc-900/70" />
-                ) : (
-                  <SwapTokenDropdown
-                    label="To"
-                    value={swapToSymbol}
-                    tokens={activeSwapTokens}
-                    onValueChange={(symbol) => {
-                      setSwapToSymbol(symbol);
-                      setSwapQuote(null);
-                      setSwapError(null);
-                      setSwapSuccess(null);
-                    }}
-                  />
-                )}
-              </label>
-            </div>
-
-            <label className="flex flex-col gap-1.5">
-              <span className="text-[0.7rem] tracking-[0.08em] text-zinc-400">
-                Amount ({selectedSwapFrom?.symbol ?? swapFromSymbol})
-              </span>
-              <Input
-                className="h-11 rounded-xl border-white/12 bg-zinc-900/80 px-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus-visible:border-cyan-200/40 focus-visible:ring-cyan-300/20"
-                type="text"
-                inputMode="decimal"
-                placeholder="1.0"
-                value={swapAmount}
-                onChange={(event) => {
-                  setSwapAmount(event.target.value);
-                  setSwapQuote(null);
-                  setSwapError(null);
-                  setSwapSuccess(null);
-                }}
-              />
-            </label>
-
-            <div className="grid grid-cols-[1fr_auto] gap-2.5">
-              <Button
-                type="button"
-                className="h-11 rounded-xl bg-white text-zinc-900 hover:bg-zinc-100"
-                disabled={swapLoading || !selectedSwapFrom || !selectedSwapTo}
-                onClick={handleSwapQuote}
-              >
-                {swapLoading ? "Fetching quote..." : "Get quote"}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="h-11 rounded-xl border-white/12 bg-zinc-900/80 px-3 text-zinc-100 hover:bg-zinc-800/80"
-                onClick={flipSwapPair}
-              >
-                <ArrowLeftRight className="size-4" />
-                <span className="sr-only">Flip pair</span>
-              </Button>
-            </div>
-          </div>
-
-          <Separator className="my-4 bg-white/10" />
-
-          <div className="space-y-2">
-            {swapError && (
-              <div className="rounded-xl border border-rose-300/30 bg-rose-900/20 px-3 py-2 text-sm text-rose-200">
-                {swapError}
-              </div>
-            )}
-
-            {swapQuote ? (
-              <div className="space-y-2">
-                <div className="grid grid-cols-2 gap-2 rounded-xl border border-white/10 bg-zinc-900/70 p-3 text-sm">
-                  <div>
-                    <p className="text-zinc-400">You pay</p>
-                    <p className="font-medium text-zinc-100">
-                      {swapQuote.offerAmount} {swapQuote.offerToken.symbol}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-zinc-400">You receive</p>
-                    <p className="font-medium text-zinc-100">
-                      {swapQuote.askAmount} {swapQuote.askToken.symbol}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 text-xs text-zinc-400">
-                  <p>
-                    Rate: 1 {swapQuote.offerToken.symbol} = {swapQuote.rate}{" "}
-                    {swapQuote.askToken.symbol}
-                  </p>
-                  <p className="text-right">Resolver: {swapQuote.resolverName}</p>
-                </div>
-
-                <div className="rounded-xl border border-white/10 bg-zinc-950/55 px-3 py-2 text-xs text-zinc-300">
-                  Quote expires at:{" "}
-                  {new Date(swapQuote.tradeStartDeadline * 1000).toLocaleTimeString()}
-                </div>
-
-                {swapQuote.routes.length > 0 && (
-                  <div className="space-y-1.5">
-                    <p className="text-xs text-zinc-400">Route preview</p>
-                    {swapQuote.routes[0].steps.map((step) => (
-                      <div
-                        key={step.id}
-                        className="rounded-lg border border-white/10 bg-zinc-950/55 px-2.5 py-2 text-xs text-zinc-300"
-                      >
-                        <p className="flex items-center gap-1.5 font-medium text-zinc-100">
-                          <span>{step.fromSymbol}</span>
-                          <ArrowRight className="size-3.5 text-zinc-400" />
-                          <span>{step.toSymbol}</span>
-                        </p>
-                        {step.chunks.map((chunk) => (
-                          <p key={chunk.id} className="mt-0.5 flex items-center gap-1 text-zinc-400">
-                            <span>{chunk.protocol}:</span>
-                            <span>{chunk.offerAmount}</span>
-                            <ArrowRight className="size-3 text-zinc-500" />
-                            <span>{chunk.askAmount}</span>
-                          </p>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
+          {swapWidgetLoadError ? (
+            <>
+              <div className="mt-4 rounded-xl border border-amber-200/30 bg-amber-700/10 px-3 py-2.5 text-xs text-amber-100">
+                <p>Couldn&apos;t load the STON.fi widget. Legacy swap mode is enabled.</p>
+                <p className="mt-1 text-[0.72rem] text-amber-200/90">{swapWidgetLoadError}</p>
                 <Button
                   type="button"
-                  className="h-11 w-full rounded-xl bg-white text-zinc-900 hover:bg-zinc-100"
-                  disabled={swapExecuting || swapLoading}
-                  onClick={handleSwapExecution}
+                  variant="outline"
+                  className="mt-2 h-9 rounded-lg border-amber-200/40 bg-transparent px-3 text-amber-100 hover:bg-amber-500/10"
+                  onClick={() => setSwapWidgetLoadError(null)}
                 >
-                  {swapExecuting ? "Submitting swap..." : "Swap now"}
+                  Retry widget
                 </Button>
               </div>
-            ) : (
-              <div className="rounded-xl border border-white/10 bg-zinc-950/45 px-3 py-2.5 text-xs text-zinc-400">
-                Quote details will appear here for{" "}
-                <span className="inline-flex items-center gap-1">
-                  <span>{selectedSwapFrom?.symbol ?? swapFromSymbol}</span>
-                  <ArrowRight className="size-3 text-zinc-500" />
-                  <span>{selectedSwapTo?.symbol ?? swapToSymbol}</span>
-                </span>
-                .
-              </div>
-            )}
 
-            {swapSuccess && (
-              <div className="rounded-xl border border-emerald-300/30 bg-emerald-900/20 px-3 py-2 text-sm text-emerald-200">
-                {swapSuccess}
+              <div className="mt-4 grid gap-3">
+                <div className="grid grid-cols-2 gap-2.5">
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-[0.7rem] tracking-[0.08em] text-zinc-400">From</span>
+                    {swapTokensLoading ? (
+                      <Skeleton className="h-11 rounded-xl bg-zinc-900/70" />
+                    ) : (
+                      <SwapTokenDropdown
+                        label="From"
+                        value={swapFromSymbol}
+                        tokens={activeSwapTokens}
+                        onValueChange={(symbol) => {
+                          setSwapFromSymbol(symbol);
+                          setSwapQuote(null);
+                          setSwapError(null);
+                          setSwapSuccess(null);
+                        }}
+                      />
+                    )}
+                  </label>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-[0.7rem] tracking-[0.08em] text-zinc-400">To</span>
+                    {swapTokensLoading ? (
+                      <Skeleton className="h-11 rounded-xl bg-zinc-900/70" />
+                    ) : (
+                      <SwapTokenDropdown
+                        label="To"
+                        value={swapToSymbol}
+                        tokens={activeSwapTokens}
+                        onValueChange={(symbol) => {
+                          setSwapToSymbol(symbol);
+                          setSwapQuote(null);
+                          setSwapError(null);
+                          setSwapSuccess(null);
+                        }}
+                      />
+                    )}
+                  </label>
+                </div>
+
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-[0.7rem] tracking-[0.08em] text-zinc-400">
+                    Amount ({selectedSwapFrom?.symbol ?? swapFromSymbol})
+                  </span>
+                  <Input
+                    className="h-11 rounded-xl border-white/12 bg-zinc-900/80 px-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus-visible:border-cyan-200/40 focus-visible:ring-cyan-300/20"
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="1.0"
+                    value={swapAmount}
+                    onChange={(event) => {
+                      setSwapAmount(event.target.value);
+                      setSwapQuote(null);
+                      setSwapError(null);
+                      setSwapSuccess(null);
+                    }}
+                  />
+                </label>
+
+                <div className="grid grid-cols-[1fr_auto] gap-2.5">
+                  <Button
+                    type="button"
+                    className="h-11 rounded-xl bg-white text-zinc-900 hover:bg-zinc-100"
+                    disabled={swapLoading || !selectedSwapFrom || !selectedSwapTo}
+                    onClick={handleSwapQuote}
+                  >
+                    {swapLoading ? "Fetching quote..." : "Get quote"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-11 rounded-xl border-white/12 bg-zinc-900/80 px-3 text-zinc-100 hover:bg-zinc-800/80"
+                    onClick={flipSwapPair}
+                  >
+                    <ArrowLeftRight className="size-4" />
+                    <span className="sr-only">Flip pair</span>
+                  </Button>
+                </div>
               </div>
-            )}
-          </div>
+
+              <Separator className="my-4 bg-white/10" />
+
+              <div className="space-y-2">
+                {swapError && (
+                  <div className="rounded-xl border border-rose-300/30 bg-rose-900/20 px-3 py-2 text-sm text-rose-200">
+                    {swapError}
+                  </div>
+                )}
+
+                {swapQuote ? (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2 rounded-xl border border-white/10 bg-zinc-900/70 p-3 text-sm">
+                      <div>
+                        <p className="text-zinc-400">You pay</p>
+                        <p className="font-medium text-zinc-100">
+                          {swapQuote.offerAmount} {swapQuote.offerToken.symbol}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-zinc-400">You receive</p>
+                        <p className="font-medium text-zinc-100">
+                          {swapQuote.askAmount} {swapQuote.askToken.symbol}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs text-zinc-400">
+                      <p>
+                        Rate: 1 {swapQuote.offerToken.symbol} = {swapQuote.rate}{" "}
+                        {swapQuote.askToken.symbol}
+                      </p>
+                      <p className="text-right">Resolver: {swapQuote.resolverName}</p>
+                    </div>
+
+                    <div className="rounded-xl border border-white/10 bg-zinc-950/55 px-3 py-2 text-xs text-zinc-300">
+                      Quote expires at:{" "}
+                      {new Date(swapQuote.tradeStartDeadline * 1000).toLocaleTimeString()}
+                    </div>
+
+                    {swapQuote.routes.length > 0 && (
+                      <div className="space-y-1.5">
+                        <p className="text-xs text-zinc-400">Route preview</p>
+                        {swapQuote.routes[0].steps.map((step) => (
+                          <div
+                            key={step.id}
+                            className="rounded-lg border border-white/10 bg-zinc-950/55 px-2.5 py-2 text-xs text-zinc-300"
+                          >
+                            <p className="flex items-center gap-1.5 font-medium text-zinc-100">
+                              <span>{step.fromSymbol}</span>
+                              <ArrowRight className="size-3.5 text-zinc-400" />
+                              <span>{step.toSymbol}</span>
+                            </p>
+                            {step.chunks.map((chunk) => (
+                              <p
+                                key={chunk.id}
+                                className="mt-0.5 flex items-center gap-1 text-zinc-400"
+                              >
+                                <span>{chunk.protocol}:</span>
+                                <span>{chunk.offerAmount}</span>
+                                <ArrowRight className="size-3 text-zinc-500" />
+                                <span>{chunk.askAmount}</span>
+                              </p>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <Button
+                      type="button"
+                      className="h-11 w-full rounded-xl bg-white text-zinc-900 hover:bg-zinc-100"
+                      disabled={swapExecuting || swapLoading}
+                      onClick={handleSwapExecution}
+                    >
+                      {swapExecuting ? "Submitting swap..." : "Swap now"}
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-white/10 bg-zinc-950/45 px-3 py-2.5 text-xs text-zinc-400">
+                    Quote details will appear here for{" "}
+                    <span className="inline-flex items-center gap-1">
+                      <span>{selectedSwapFrom?.symbol ?? swapFromSymbol}</span>
+                      <ArrowRight className="size-3 text-zinc-500" />
+                      <span>{selectedSwapTo?.symbol ?? swapToSymbol}</span>
+                    </span>
+                    .
+                  </div>
+                )}
+
+                {swapSuccess && (
+                  <div className="rounded-xl border border-emerald-300/30 bg-emerald-900/20 px-3 py-2 text-sm text-emerald-200">
+                    {swapSuccess}
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <StonSwapWidget
+              className="mt-4"
+              onMountError={setSwapWidgetLoadError}
+            />
+          )}
         </section>
       ) : (
         <section className="relative z-10 flex min-h-0 flex-1 flex-col">

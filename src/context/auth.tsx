@@ -19,6 +19,11 @@ type AuthContextType = {
 };
 
 const AuthContext = createContext<AuthContextType | null>(null);
+const INVALID_TELEGRAM_INIT_DATA_ERROR = "Invalid Telegram init data.";
+
+function isInvalidTelegramInitDataError(error?: string): boolean {
+  return error?.trim() === INVALID_TELEGRAM_INIT_DATA_ERROR;
+}
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -86,6 +91,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         if (data.customToken) {
           await signInWithCustomToken(auth, data.customToken);
           return { success: true, error: null };
+        }
+
+        if (isInvalidTelegramInitDataError(data.error)) {
+          return {
+            success: false,
+            error: null,
+          };
         }
 
         console.error("Server can't provide custom token:", data.error);
