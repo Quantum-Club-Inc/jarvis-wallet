@@ -1,6 +1,6 @@
 import "server-only";
 
-import { formatTokenAmount, resolveToken, type TokenInfo } from "@/lib/defi/tokens";
+import { formatTokenAmount, parseTokenAmount, resolveToken, type TokenInfo } from "@/lib/defi/tokens";
 
 const DEFAULT_STON_API_URL = "https://api.ston.fi";
 
@@ -35,9 +35,7 @@ export async function simulateSwap(params: {
     throw new Error(`Unknown token: ${params.askTokenSymbol}`);
   }
 
-  const offerUnits = (
-    BigInt(Math.round(parseFloat(params.offerAmount) * 10 ** offerToken.decimals))
-  ).toString();
+  const offerUnits = parseTokenAmount(params.offerAmount, offerToken.decimals).toString();
 
   const apiUrl = process.env.STON_API_URL?.trim() || DEFAULT_STON_API_URL;
   const url = new URL(`${apiUrl}/v1/swap/simulate`);

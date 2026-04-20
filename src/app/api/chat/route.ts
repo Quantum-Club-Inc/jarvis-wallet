@@ -27,7 +27,6 @@ export async function POST(req: Request): Promise<Response> {
       } | null;
       n8nAutomationEnabled?: boolean;
       isFirstTime?: boolean;
-      newMnemonic?: string;
       interactionMode?: "overview" | "voice" | "chat";
     };
 
@@ -37,7 +36,6 @@ export async function POST(req: Request): Promise<Response> {
       walletContext,
       n8nAutomationEnabled,
       isFirstTime,
-      newMnemonic,
       interactionMode,
     } = body;
 
@@ -55,8 +53,8 @@ export async function POST(req: Request): Promise<Response> {
       Boolean(n8nAutomationEnabled),
     );
     
-    if (isFirstTime && newMnemonic) {
-      systemPrompt += `\n\nCRITICAL DIRECTIVE: The user has just created a new wallet. Their 24-word recovery phrase is: "${newMnemonic}". You must ask the user to read back all 24 words using their voice to verify they have saved it. DO NOT let them perform any wallet actions until they have successfully repeated the phrase back to you.`;
+    if (isFirstTime) {
+      systemPrompt += `\n\nCRITICAL DIRECTIVE: The user has just created a new wallet. Their 24-word recovery phrase has been displayed to them in the app UI. Ask them to confirm they have safely written it down before proceeding. Do NOT ask them to speak the words aloud.`;
     }
 
     const result = streamText({

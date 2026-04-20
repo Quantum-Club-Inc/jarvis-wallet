@@ -128,13 +128,29 @@ export function buildUnstakeTransaction(amountTsTon: string): StakeTransactionPa
 export async function generateStakeMessages(amountNano: bigint) {
   const interceptor = new InterceptConnector();
   const ts = getTonstakersInstance(interceptor);
-  await ts.stake(amountNano); // Populates the interceptor securely without signing
-  return interceptor.capturedTx?.messages ?? [];
+  try {
+    await ts.stake(amountNano);
+  } catch (error) {
+    throw new Error(`Tonstakers SDK failed to generate stake messages: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const messages = interceptor.capturedTx?.messages ?? [];
+  if (messages.length === 0) {
+    throw new Error("Tonstakers SDK returned no messages for stake transaction.");
+  }
+  return messages;
 }
 
 export async function generateUnstakeMessages(amountNano: bigint) {
   const interceptor = new InterceptConnector();
   const ts = getTonstakersInstance(interceptor);
-  await ts.unstake(amountNano); 
-  return interceptor.capturedTx?.messages ?? [];
+  try {
+    await ts.unstake(amountNano);
+  } catch (error) {
+    throw new Error(`Tonstakers SDK failed to generate unstake messages: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const messages = interceptor.capturedTx?.messages ?? [];
+  if (messages.length === 0) {
+    throw new Error("Tonstakers SDK returned no messages for unstake transaction.");
+  }
+  return messages;
 }

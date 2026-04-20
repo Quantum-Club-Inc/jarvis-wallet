@@ -17,6 +17,7 @@ export function useTTS(): UseTTSReturn {
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
+  const fetchAbortRef = useRef<AbortController | null>(null);
   const timePerWordRef = useRef(0);
   const lastWordIdxRef = useRef(-1);
 
@@ -76,6 +77,10 @@ export function useTTS(): UseTTSReturn {
       return;
     }
 
+    fetchAbortRef.current?.abort();
+    const controller = new AbortController();
+    fetchAbortRef.current = controller;
+
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
@@ -98,6 +103,7 @@ export function useTTS(): UseTTSReturn {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: normalizedText }),
+      signal: controller.signal,
     })
       .then((res) => {
         if (!res.ok)
@@ -163,6 +169,7 @@ export function useTTS(): UseTTSReturn {
         });
       })
       .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
         console.error("[TTS] Fetch or blob error:", err);
         resetSpeechState();
         speakWithBrowser(normalizedText, wordList);
@@ -170,6 +177,8 @@ export function useTTS(): UseTTSReturn {
   }, [resetSpeechState, speakWithBrowser]);
 
   const stop = useCallback(() => {
+    fetchAbortRef.current?.abort();
+    fetchAbortRef.current = null;
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;

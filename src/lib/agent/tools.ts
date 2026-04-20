@@ -117,6 +117,7 @@ async function runN8nAutomation(
       ...payload,
     }),
     cache: "no-store",
+    signal: AbortSignal.timeout(30_000),
   });
 
   const data = await parseJsonSafe(response);

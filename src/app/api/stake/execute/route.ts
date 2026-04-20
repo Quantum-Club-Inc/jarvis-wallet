@@ -24,6 +24,8 @@ function normalizeTonAddress(address: string): string | null {
   }
 }
 
+const MIN_STAKE_TON = 1;
+
 function isValidAmount(value: string): boolean {
   return /^[0-9]+(\.[0-9]+)?$/.test(value) && Number(value) > 0;
 }
@@ -44,6 +46,13 @@ export async function POST(request: NextRequest): Promise<Response> {
     if (!isValidAmount(amountTon)) {
       return NextResponse.json(
         { error: "amountTon must be a positive TON amount." },
+        { status: 400 },
+      );
+    }
+
+    if (Number(amountTon) < MIN_STAKE_TON) {
+      return NextResponse.json(
+        { error: `Minimum stake amount is ${MIN_STAKE_TON} TON.` },
         { status: 400 },
       );
     }

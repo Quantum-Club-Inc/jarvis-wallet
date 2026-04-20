@@ -978,7 +978,6 @@ function JarvisApp() {
           : null,
         n8nAutomationEnabled: true,
         isFirstTime: welcomeMode === "first",
-        newMnemonic: newMnemonic?.join(" "),
         interactionMode: homeMode,
       },
     }),
