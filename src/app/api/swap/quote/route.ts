@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   Blockchain,
   GaslessSettlement,
-  Omniston,
   QuoteResponseEventType,
   SettlementMethod,
   type Address,
@@ -10,6 +9,7 @@ import {
   type QuoteResponseEvent_QuoteUpdated,
 } from "@ston-fi/omniston-sdk";
 
+import { getOmnistonClient } from "@/lib/defi/omniston-client";
 import {
   formatTokenAmount,
   parseTokenAmount,
@@ -26,7 +26,6 @@ const BEST_QUOTE_WINDOW_MS = 500;
 const NO_QUOTE_GRACE_MS = 350;
 const QUOTE_RETRY_ATTEMPTS = 2;
 const QUOTE_RETRY_DELAY_MS = 200;
-const DEFAULT_OMNISTON_API_URL = "wss://omni-ws.ston.fi";
 const DEFAULT_MAX_SLIPPAGE_BPS = 100;
 
 interface SwapQuoteRequestBody {
@@ -71,12 +70,11 @@ function formatUnitsSafe(units: string, decimals: number): string {
 }
 
 async function requestBestQuote(params: {
-  apiUrl: string;
   bidAddress: string;
   askAddress: string;
   bidUnits: string;
 }): Promise<QuoteResponseEvent_QuoteUpdated> {
-  const omniston = new Omniston({ apiUrl: params.apiUrl });
+  const omniston = getOmnistonClient();
 
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -163,7 +161,6 @@ async function requestBestQuote(params: {
         noQuoteTimerId = null;
       }
       clearTimeout(timeoutId);
-      omniston.close();
     };
 
     const timeoutId = setTimeout(() => {
@@ -252,8 +249,16 @@ function isNoQuoteError(error: unknown): boolean {
   return message.includes("no swap quote available");
 }
 
+function isRateLimitError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return message.includes("429") || message.includes("too many");
+}
+
 async function requestBestQuoteWithRetry(params: {
-  apiUrl: string;
   bidAddress: string;
   askAddress: string;
   bidUnits: string;
@@ -266,7 +271,7 @@ async function requestBestQuoteWithRetry(params: {
     } catch (error) {
       lastError = error;
       const isLastAttempt = attempt === QUOTE_RETRY_ATTEMPTS;
-      if (isLastAttempt || isNoQuoteError(error)) {
+      if (isLastAttempt || isNoQuoteError(error) || isRateLimitError(error)) {
         break;
       }
 
@@ -352,9 +357,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       );
     }
 
-    const apiUrl = process.env.OMNISTON_API_URL?.trim() || DEFAULT_OMNISTON_API_URL;
     const quoteEvent = await requestBestQuoteWithRetry({
-      apiUrl,
       bidAddress: offerToken.address,
       askAddress: askToken.address,
       bidUnits: offerUnits.toString(),
@@ -393,6 +396,13 @@ export async function POST(request: NextRequest): Promise<Response> {
       routes: buildRoutePreview(quote, tokenCatalog.byAddress),
     });
   } catch (error) {
+    if (isRateLimitError(error)) {
+      return NextResponse.json(
+        { error: "Swap provider is rate-limiting requests right now. Retry in a few seconds." },
+        { status: 429 },
+      );
+    }
+
     if (isNoQuoteError(error)) {
       return NextResponse.json(
         { error: "No swap quote available for this pair right now." },

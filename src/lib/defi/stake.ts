@@ -65,12 +65,15 @@ export async function getStakingInfo(): Promise<StakingInfo> {
   const ts = getTonstakersInstance(new ReadOnlyConnector());
 
   try {
-    const apy = await ts.getCurrentApy();
-    const tvl = await ts.getTvl();
-    const stakers = await ts.getStakersCount();
-    const rates = await ts.getRates();
-
-    const currentRate = rates?.tsTonToTon ?? 1.0;
+    // Tonstakers helper methods call fetchStakingPoolInfo internally each time.
+    // Read once and derive all overview values to avoid request fan-out and 429s.
+    const { poolInfo, poolFullData } = await ts.fetchStakingPoolInfo();
+    const apy = Number(poolInfo.apy) || 0;
+    const tvl = Number(poolInfo.total_amount) || 0;
+    const stakers = Number(poolInfo.current_nominators) || 0;
+    const totalBalance = Number(poolFullData?.total_balance) || 0;
+    const supply = Number(poolFullData?.supply) || 0;
+    const currentRate = supply > 0 ? totalBalance / supply : 1.0;
 
     return {
       apy: `${apy.toFixed(2)}%`,
