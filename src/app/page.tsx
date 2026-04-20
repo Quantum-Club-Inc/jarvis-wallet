@@ -1032,6 +1032,18 @@ function JarvisApp() {
     : 0;
   const estimatedTsTon = stakeAmountIsValid ? numericStakeAmount : 0;
 
+  const numericSwapAmount = Number(swapAmount);
+  let selectedSwapFromBalance = 0;
+  if (selectedSwapFrom?.symbol === "TON") {
+    selectedSwapFromBalance = Number(walletSummary?.totalTon ?? walletBalance ?? "0");
+  } else {
+    const asset = walletSummary?.assets.find((a) => a.symbol === selectedSwapFrom?.symbol);
+    if (asset) {
+      selectedSwapFromBalance = parseFloat(asset.amount);
+    }
+  }
+  const hasInsufficientSwapBalance = isValidSwapAmountInput(swapAmount) && numericSwapAmount > selectedSwapFromBalance;
+
   useEffect(() => {
     if (speakingWasActiveRef.current && !isSpeaking) {
       lastSpeakingEndedAtRef.current = Date.now();
@@ -1994,10 +2006,10 @@ function JarvisApp() {
               <Button
                 type="button"
                 className="h-11 rounded-xl bg-white text-zinc-900 hover:bg-zinc-100"
-                disabled={swapLoading || !selectedSwapFrom || !selectedSwapTo}
+                disabled={swapLoading || !selectedSwapFrom || !selectedSwapTo || hasInsufficientSwapBalance}
                 onClick={handleSwapQuote}
               >
-                {swapLoading ? "Fetching quote..." : "Get quote"}
+                {swapLoading ? "Fetching quote..." : hasInsufficientSwapBalance ? "Insufficient balance" : "Get quote"}
               </Button>
               <Button
                 type="button"
